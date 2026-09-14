@@ -31,7 +31,9 @@ Keep the database on Supabase. Render free sleeps after ~15 minutes idle.
 1. Push this repo to GitHub (`Alfayad-s/hybridpro-backend`).
 2. In [Render](https://dashboard.render.com): **New → Web Service → Connect the GitHub repo**.
 3. Settings:
-   - Runtime: **Docker** (uses `Dockerfile`)
+   - Language: **Node**
+   - Build command: `npm ci --include=dev && npm run build`
+   - Start command: `node dist/main.js`
    - Instance: **Free**
    - Health check path: `/api/health`
 4. Add environment variables (do not set `PORT` — Render sets it):
