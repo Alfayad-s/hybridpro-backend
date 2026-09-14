@@ -1,0 +1,3 @@
+api.hybridpro.in {
+	reverse_proxy api:3002
+}

@@ -23,3 +23,79 @@ Website and mobile app `.env.local`:
 HYBRID_BACKEND_URL=http://localhost:3002
 INTERNAL_API_SECRET=same-as-backend
 ```
+
+## Deploy on Render (current)
+
+Keep the database on Supabase. Render free sleeps after ~15 minutes idle.
+
+1. Push this repo to GitHub (`Alfayad-s/hybridpro-backend`).
+2. In [Render](https://dashboard.render.com): **New → Web Service → Connect the GitHub repo**.
+3. Settings:
+   - Runtime: **Docker** (uses `Dockerfile`)
+   - Instance: **Free**
+   - Health check path: `/api/health`
+4. Add environment variables (do not set `PORT` — Render sets it):
+
+```bash
+NODE_ENV=production
+DATABASE_URL=your-supabase-url
+INTERNAL_API_SECRET=same-as-website-and-app
+COACH_EMAIL=akash@hybridpro.fit
+COACH_PASSWORD=your-coach-password
+COACH_SESSION_SECRET=your-session-secret
+WEBSITE_URL=https://hybridpro.in
+APP_URL=https://app.hybridpro.in
+```
+
+5. Deploy, then open `https://your-service.onrender.com/api/health`.
+6. On Vercel (website + app):
+
+```bash
+HYBRID_BACKEND_URL=https://your-service.onrender.com
+INTERNAL_API_SECRET=same-as-backend
+```
+
+The first request after idle can take 30–50 seconds.
+
+## Deploy on Oracle Cloud Always Free
+
+Use an Ampere A1 ARM VM (Always Free). Keep the database on Supabase. Put the API behind HTTPS at `api.hybridpro.in`.
+
+1. Create a free Oracle Cloud account. Home region cannot be changed later.
+2. Create a VCN with a public subnet. Ingress rules: TCP **22**, **80**, **443**.
+3. Create a compute instance:
+   - Image: Ubuntu 22.04 or 24.04
+   - Shape: **VM.Standard.A1.Flex** (Ampere)
+   - 1 OCPU, 6 GB RAM is enough
+   - Assign a public IP
+   - Add your SSH public key
+4. If instance create fails with out of capacity, try another availability domain.
+5. Point **api.hybridpro.in** A record at the VM public IP.
+6. SSH in and install Docker:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker $USER
+# log out and back in
+```
+
+7. Clone and start:
+
+```bash
+git clone git@github.com:Alfayad-s/hybridpro-backend.git
+cd hybridpro-backend
+cp .env.example .env
+nano .env
+docker compose up -d --build
+```
+
+8. Confirm `https://api.hybridpro.in/api/health` returns `{"ok":true,...}`.
+9. On Vercel (website + app) set:
+
+```bash
+HYBRID_BACKEND_URL=https://api.hybridpro.in
+INTERNAL_API_SECRET=same-as-backend
+```
+
+`.env` on the VM must include `DATABASE_URL` (Supabase), `INTERNAL_API_SECRET`, `COACH_EMAIL`, `COACH_PASSWORD`, `COACH_SESSION_SECRET`, `WEBSITE_URL=https://hybridpro.in`, `APP_URL=https://app.hybridpro.in`, and `PORT=3002`.
