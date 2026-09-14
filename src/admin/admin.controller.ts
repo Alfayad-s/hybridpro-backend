@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service.js';
 import { CoachGuard } from '../auth/coach.guard.js';
+import { ContactService } from '../contact/contact.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
 
 @Controller('admin')
@@ -19,6 +20,7 @@ export class AdminController {
   constructor(
     private readonly auth: AuthService,
     private readonly subscriptions: SubscriptionService,
+    private readonly contacts: ContactService,
   ) {}
 
   @Post('auth/login')
@@ -70,5 +72,22 @@ export class AdminController {
       return { subscription: await this.subscriptions.cancelSubscription(id) };
     }
     throw new BadRequestException('Unknown action');
+  }
+
+  @Get('contacts')
+  @UseGuards(CoachGuard)
+  contactList(@Query('q') q?: string, @Query('status') status?: string) {
+    return this.contacts.list({ q, status }).then((submissions) => ({ submissions }));
+  }
+
+  @Get('contacts/:id')
+  @UseGuards(CoachGuard)
+  async contactDetail(@Param('id') id: string) {
+    const submission = await this.contacts.getById(id);
+    if (!submission) throw new NotFoundException('Submission not found');
+    if (submission.status === 'new') {
+      return { submission: (await this.contacts.markRead(id)) ?? submission };
+    }
+    return { submission };
   }
 }

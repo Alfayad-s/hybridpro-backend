@@ -28,6 +28,20 @@ export const subscriptions = pgTable(
   ],
 );
 
+export const contactSubmissions = pgTable(
+  'contact_submissions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    phone: text('phone'),
+    goal: text('goal').notNull(),
+    status: text('status').default('new').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('contact_submissions_created_idx').on(t.createdAt), index('contact_submissions_email_idx').on(t.email)],
+);
+
 export const payments = pgTable(
   'payments',
   {

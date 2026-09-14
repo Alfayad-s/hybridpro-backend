@@ -5,6 +5,8 @@ import { AdminController } from './admin/admin.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { CoachGuard } from './auth/coach.guard.js';
 import { InternalGuard } from './auth/internal.guard.js';
+import { ContactController } from './contact/contact.controller.js';
+import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
 import { HealthController } from './health.controller.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
@@ -24,7 +26,7 @@ import { SubscriptionService } from './subscriptions/subscription.service.js';
     }),
     DbModule,
   ],
-  controllers: [HealthController, SubscriptionsController, AdminController],
-  providers: [SubscriptionService, AuthService, InternalGuard, CoachGuard],
+  controllers: [HealthController, SubscriptionsController, ContactController, AdminController],
+  providers: [SubscriptionService, ContactService, AuthService, InternalGuard, CoachGuard],
 })
 export class AppModule {}

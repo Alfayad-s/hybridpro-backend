@@ -7,6 +7,21 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+function errorMessage(exception: unknown) {
+  if (!(exception instanceof Error)) return 'Internal error';
+  const cause = (exception as Error & { cause?: unknown }).cause;
+  const nested =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === 'string'
+        ? cause
+        : '';
+  if (nested && !exception.message.includes(nested)) {
+    return `${exception.message} (${nested})`;
+  }
+  return exception.message;
+}
+
 @Catch()
 export class HttpErrorFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
@@ -18,7 +33,7 @@ export class HttpErrorFilter implements ExceptionFilter {
       return;
     }
 
-    const message = exception instanceof Error ? exception.message : 'Internal error';
+    const message = errorMessage(exception);
     const status =
       /invalid|missing|required|unknown/i.test(message)
         ? HttpStatus.BAD_REQUEST
