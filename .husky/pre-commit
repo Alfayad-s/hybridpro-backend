@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -e
+echo "Running production build before commit..."
+npm run build

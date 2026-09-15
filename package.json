@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
+    "prepare": "node .husky/install.mjs",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "dev": "nest start --watch",
@@ -36,6 +37,7 @@
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "dotenv": "^17.4.2",
+    "husky": "^9.1.7",
     "oxlint": "^1.58.0",
     "prettier": "^3.4.2",
     "typescript": "^6.0.2"

@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
-import { payments, subscriptions } from '../db/schema.js';
+import { payments, profiles, subscriptions } from '../db/schema.js';
 import {
   getPricingPlan,
   isPricingPlanId,
@@ -27,6 +27,16 @@ export type PublicSubscription = {
   startsAt: string | null;
   expiresAt: string | null;
   nextPlanId: string | null;
+  fullName: string | null;
+  avatarUrl: string | null;
+  appLinked: boolean;
+};
+
+export type AdminClientRow = PublicSubscription & {
+  paymentCount: number;
+  totalPaidPaise: number;
+  lastAmountPaise: number;
+  lastPaidAt: string | null;
 };
 
 @Injectable()
@@ -41,7 +51,10 @@ export class SubscriptionService {
     return new Date(from.getTime() + days * DAY_MS);
   }
 
-  private toPublic(row: SubscriptionRecord): PublicSubscription | null {
+  private toPublic(
+    row: SubscriptionRecord,
+    profile?: { fullName: string | null; avatarUrl: string | null } | null,
+  ): PublicSubscription | null {
     if (!isPricingPlanId(row.planId)) return null;
     const plan = getPricingPlan(row.planId);
     return {
@@ -55,6 +68,9 @@ export class SubscriptionService {
       startsAt: row.startsAt ? row.startsAt.toISOString() : null,
       expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
       nextPlanId: row.nextPlanId,
+      fullName: profile?.fullName ?? null,
+      avatarUrl: profile?.avatarUrl ?? null,
+      appLinked: Boolean(row.userId),
     };
   }
 
@@ -112,12 +128,23 @@ export class SubscriptionService {
     return this.toPublic(await this.expireIfNeeded(row));
   }
 
+  private async profilesByUserIds(userIds: Array<string | null | undefined>) {
+    const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+    if (ids.length === 0) {
+      return new Map<string, { fullName: string | null; avatarUrl: string | null }>();
+    }
+    const rows = await this.db.select().from(profiles).where(inArray(profiles.id, ids));
+    return new Map(
+      rows.map((row) => [row.id, { fullName: row.fullName, avatarUrl: row.avatarUrl }]),
+    );
+  }
+
   async attachSubscriptionToUser(input: { userId: string; email: string }) {
     const email = this.normalizeEmail(input.email);
     await this.db
       .update(subscriptions)
       .set({ userId: input.userId })
-      .where(and(eq(subscriptions.email, email), isNull(subscriptions.userId)));
+      .where(eq(subscriptions.email, email));
     return this.getSubscriptionForIdentity({ userId: input.userId, email });
   }
 
@@ -259,7 +286,17 @@ export class SubscriptionService {
     if (input?.planId) filters.push(eq(subscriptions.planId, input.planId));
     if (input?.q) {
       const q = `%${input.q.trim().toLowerCase()}%`;
-      filters.push(or(ilike(subscriptions.email, q), ilike(subscriptions.mobile, q)));
+      const nameMatches = await this.db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(ilike(profiles.fullName, q));
+      const nameIds = nameMatches.map((row) => row.id);
+      const identityClauses = [
+        ilike(subscriptions.email, q),
+        ilike(subscriptions.mobile, q),
+        ...(nameIds.length ? [inArray(subscriptions.userId, nameIds)] : []),
+      ];
+      filters.push(or(...identityClauses));
     }
 
     const rows = await this.db
@@ -270,7 +307,63 @@ export class SubscriptionService {
       .limit(200);
 
     const refreshed = await Promise.all(rows.map((row) => this.expireIfNeeded(row)));
-    return refreshed.map((row) => this.toPublic(row)).filter(Boolean) as PublicSubscription[];
+    const ids = refreshed.map((row) => row.id);
+    const profileByUserId = await this.profilesByUserIds(refreshed.map((row) => row.userId));
+    const payRows = ids.length
+      ? await this.db.select().from(payments).where(inArray(payments.subscriptionId, ids))
+      : [];
+
+    const payBySub = new Map<
+      string,
+      { totalPaidPaise: number; lastPaidAt: Date; lastAmountPaise: number; paymentCount: number }
+    >();
+    for (const item of payRows) {
+      if (!item.subscriptionId || item.status !== 'paid') continue;
+      const current = payBySub.get(item.subscriptionId);
+      if (!current) {
+        payBySub.set(item.subscriptionId, {
+          totalPaidPaise: item.amountPaise,
+          lastPaidAt: item.paidAt,
+          lastAmountPaise: item.amountPaise,
+          paymentCount: 1,
+        });
+        continue;
+      }
+      current.totalPaidPaise += item.amountPaise;
+      current.paymentCount += 1;
+      if (item.paidAt > current.lastPaidAt) {
+        current.lastPaidAt = item.paidAt;
+        current.lastAmountPaise = item.amountPaise;
+      }
+    }
+
+    const clients: AdminClientRow[] = [];
+    for (const row of refreshed) {
+      const pub = this.toPublic(
+        row,
+        row.userId ? profileByUserId.get(row.userId) ?? null : null,
+      );
+      if (!pub) continue;
+      const pay = payBySub.get(row.id);
+      clients.push({
+        ...pub,
+        paymentCount: pay?.paymentCount ?? 0,
+        totalPaidPaise: pay?.totalPaidPaise ?? 0,
+        lastAmountPaise: pay?.lastAmountPaise ?? 0,
+        lastPaidAt: pay?.lastPaidAt ? pay.lastPaidAt.toISOString() : null,
+      });
+    }
+
+    clients.sort((a, b) => {
+      const aActive = a.status === 'active' ? 0 : 1;
+      const bActive = b.status === 'active' ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      const aPaid = a.lastPaidAt ? new Date(a.lastPaidAt).getTime() : 0;
+      const bPaid = b.lastPaidAt ? new Date(b.lastPaidAt).getTime() : 0;
+      return bPaid - aPaid;
+    });
+
+    return clients;
   }
 
   async getSubscriptionStats() {
@@ -290,13 +383,20 @@ export class SubscriptionService {
       }
     }
 
-    return { total: rows.length, active, expired, byPlan };
+    const payRows = await this.db.select().from(payments);
+    const paid = payRows.filter((item) => item.status === 'paid');
+    const paidOrders = paid.length;
+    const revenuePaise = paid.reduce((sum, item) => sum + item.amountPaise, 0);
+    const paidClients = new Set(paid.map((item) => item.subscriptionId).filter(Boolean)).size;
+
+    return { total: rows.length, active, expired, byPlan, paidOrders, paidClients, revenuePaise };
   }
 
   async getClientDetail(id: string) {
     const [row] = await this.db.select().from(subscriptions).where(eq(subscriptions.id, id)).limit(1);
     if (!row) return null;
     const current = await this.expireIfNeeded(row);
+    const profileByUserId = await this.profilesByUserIds([current.userId]);
     const history = await this.db
       .select()
       .from(payments)
@@ -304,7 +404,10 @@ export class SubscriptionService {
       .orderBy(desc(payments.paidAt));
 
     return {
-      subscription: this.toPublic(current),
+      subscription: this.toPublic(
+        current,
+        current.userId ? profileByUserId.get(current.userId) ?? null : null,
+      ),
       payments: history.map((item) => ({
         id: item.id,
         planId: item.planId,

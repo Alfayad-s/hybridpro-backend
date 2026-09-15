@@ -1,5 +1,13 @@
 import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
+export const profiles = pgTable('profiles', {
+  id: uuid('id').primaryKey().notNull(),
+  fullName: text('full_name'),
+  avatarUrl: text('avatar_url'),
+  experienceLevel: text('experience_level'),
+  updatedAt: timestamp('updated_at'),
+});
+
 export const subscriptions = pgTable(
   'subscriptions',
   {
