@@ -51,12 +51,27 @@ export class SubscriptionService {
     return new Date(from.getTime() + days * DAY_MS);
   }
 
+  private asDate(value: Date | string | null | undefined) {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private isLive(row: SubscriptionRecord) {
+    if (row.status !== 'active' && row.status !== 'expired') return false;
+    const expiresAt = this.asDate(row.expiresAt);
+    if (expiresAt && expiresAt.getTime() <= Date.now()) return false;
+    return row.status === 'active' || Boolean(expiresAt);
+  }
+
   private toPublic(
     row: SubscriptionRecord,
     profile?: { fullName: string | null; avatarUrl: string | null } | null,
   ): PublicSubscription | null {
     if (!isPricingPlanId(row.planId)) return null;
     const plan = getPricingPlan(row.planId);
+    const startsAt = this.asDate(row.startsAt);
+    const expiresAt = this.asDate(row.expiresAt);
     return {
       id: row.id,
       userId: row.userId,
@@ -64,9 +79,9 @@ export class SubscriptionService {
       mobile: row.mobile,
       planId: row.planId,
       planName: plan?.name || row.planId,
-      status: row.status,
-      startsAt: row.startsAt ? row.startsAt.toISOString() : null,
-      expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+      status: this.isLive(row) ? 'active' : row.status,
+      startsAt: startsAt ? startsAt.toISOString() : null,
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
       nextPlanId: row.nextPlanId,
       fullName: profile?.fullName ?? null,
       avatarUrl: profile?.avatarUrl ?? null,
@@ -75,7 +90,17 @@ export class SubscriptionService {
   }
 
   private async expireIfNeeded(row: SubscriptionRecord) {
-    if (row.status !== 'active' || !row.expiresAt || row.expiresAt.getTime() > Date.now()) {
+    const expiresAt = this.asDate(row.expiresAt);
+    if (row.status === 'expired' && expiresAt && expiresAt.getTime() > Date.now()) {
+      const [restored] = await this.db
+        .update(subscriptions)
+        .set({ status: 'active' })
+        .where(eq(subscriptions.id, row.id))
+        .returning();
+      return restored ?? { ...row, status: 'active' as const };
+    }
+
+    if (row.status !== 'active' || !expiresAt || expiresAt.getTime() > Date.now()) {
       return row;
     }
 
@@ -112,14 +137,24 @@ export class SubscriptionService {
 
     if (clauses.length === 0) return null;
 
-    const [row] = await this.db
+    const rows = await this.db
       .select()
       .from(subscriptions)
       .where(or(...clauses))
       .orderBy(desc(subscriptions.updatedAt))
-      .limit(1);
+      .limit(10);
 
-    return row ?? null;
+    const now = Date.now();
+    return (
+      rows.find((row) => {
+        if (row.status !== 'active' && row.status !== 'expired') return false;
+        const expiresAt = this.asDate(row.expiresAt);
+        if (expiresAt && expiresAt.getTime() <= now) return false;
+        return row.status === 'active' || Boolean(expiresAt);
+      }) ??
+      rows[0] ??
+      null
+    );
   }
 
   async getSubscriptionForIdentity(input: { userId?: string | null; email?: string | null }) {
