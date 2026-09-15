@@ -20,6 +20,24 @@ export class SubscriptionsController {
       .then((subscription) => ({ subscription }));
   }
 
+  @Get('plan')
+  @UseGuards(InternalGuard)
+  plan(@Query('email') email?: string, @Query('userId') userId?: string) {
+    if (!email && !userId) {
+      throw new BadRequestException('email or userId is required');
+    }
+    return this.subscriptions.getPlanForIdentity({ email, userId });
+  }
+
+  @Get('me')
+  @UseGuards(InternalGuard)
+  me(@Query('email') email?: string, @Query('userId') userId?: string) {
+    if (!email && !userId) {
+      throw new BadRequestException('email or userId is required');
+    }
+    return this.subscriptions.getPlanForIdentity({ email, userId });
+  }
+
   @Post('activate')
   @UseGuards(InternalGuard)
   activate(
@@ -54,5 +72,41 @@ export class SubscriptionsController {
     return this.subscriptions
       .attachSubscriptionToUser({ userId: body.userId, email: body.email })
       .then((subscription) => ({ ok: true, subscription }));
+  }
+
+  @Post('intent')
+  @UseGuards(InternalGuard)
+  intent(
+    @Body()
+    body: {
+      pineOrderId?: string;
+      merchantOrderReference?: string;
+      email?: string;
+      mobile?: string;
+      planId?: string;
+      userId?: string;
+    },
+  ) {
+    return this.subscriptions
+      .saveCheckoutIntent({
+        pineOrderId: body.pineOrderId,
+        merchantOrderReference: body.merchantOrderReference || '',
+        email: body.email || '',
+        mobile: body.mobile,
+        planId: body.planId || '',
+        userId: body.userId,
+      })
+      .then((subscription) => ({ ok: true, subscription }));
+  }
+
+  @Get('intent')
+  @UseGuards(InternalGuard)
+  getIntent(
+    @Query('pineOrderId') pineOrderId?: string,
+    @Query('ref') merchantOrderReference?: string,
+  ) {
+    return this.subscriptions
+      .getCheckoutIntent({ pineOrderId, merchantOrderReference })
+      .then((subscription) => ({ subscription }));
   }
 }

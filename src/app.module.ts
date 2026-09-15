@@ -9,6 +9,7 @@ import { ContactController } from './contact/contact.controller.js';
 import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
 import { HealthController } from './health.controller.js';
+import { PaymentsController } from './payments/payments.controller.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
 import { SubscriptionService } from './subscriptions/subscription.service.js';
 
@@ -26,7 +27,13 @@ import { SubscriptionService } from './subscriptions/subscription.service.js';
     }),
     DbModule,
   ],
-  controllers: [HealthController, SubscriptionsController, ContactController, AdminController],
+  controllers: [
+    HealthController,
+    PaymentsController,
+    SubscriptionsController,
+    ContactController,
+    AdminController,
+  ],
   providers: [SubscriptionService, ContactService, AuthService, InternalGuard, CoachGuard],
 })
 export class AppModule {}

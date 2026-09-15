@@ -128,6 +128,28 @@ export class SubscriptionService {
     return this.toPublic(await this.expireIfNeeded(row));
   }
 
+  async getPlanForIdentity(input: { userId?: string | null; email?: string | null }) {
+    const subscription = await this.getSubscriptionForIdentity(input);
+    const active = Boolean(
+      subscription &&
+        subscription.status === 'active' &&
+        (!subscription.expiresAt || new Date(subscription.expiresAt).getTime() > Date.now()),
+    );
+    const daysRemaining =
+      active && subscription?.expiresAt
+        ? Math.max(0, Math.ceil((new Date(subscription.expiresAt).getTime() - Date.now()) / DAY_MS))
+        : null;
+
+    return {
+      active,
+      planId: active ? subscription?.planId ?? null : null,
+      planName: active ? subscription?.planName ?? null : null,
+      expiresAt: subscription?.expiresAt ?? null,
+      daysRemaining,
+      subscription,
+    };
+  }
+
   private async profilesByUserIds(userIds: Array<string | null | undefined>) {
     const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
     if (ids.length === 0) {
@@ -146,6 +168,147 @@ export class SubscriptionService {
       .set({ userId: input.userId })
       .where(eq(subscriptions.email, email));
     return this.getSubscriptionForIdentity({ userId: input.userId, email });
+  }
+
+  async saveCheckoutIntent(input: {
+    pineOrderId?: string | null;
+    merchantOrderReference: string;
+    email: string;
+    mobile?: string | null;
+    planId: string;
+    userId?: string | null;
+  }) {
+    if (!isPricingPlanId(input.planId)) throw new Error('Invalid plan');
+    const email = this.normalizeEmail(input.email);
+    const pineOrderId = input.pineOrderId?.trim() || null;
+    const merchantOrderReference = input.merchantOrderReference.trim();
+    if (!email || !merchantOrderReference) throw new Error('Missing checkout identity');
+
+    const existing =
+      (pineOrderId
+        ? (
+            await this.db
+              .select()
+              .from(subscriptions)
+              .where(eq(subscriptions.pineOrderId, pineOrderId))
+              .limit(1)
+          )[0]
+        : null) ||
+      (
+        await this.db
+          .select()
+          .from(subscriptions)
+          .where(eq(subscriptions.merchantOrderReference, merchantOrderReference))
+          .limit(1)
+      )[0] ||
+      (await this.findLatestForIdentity({ email, userId: input.userId }));
+
+    if (existing?.status === 'active') {
+      return this.toPublic(existing);
+    }
+
+    const payload = {
+      userId: input.userId || existing?.userId || null,
+      email,
+      mobile: input.mobile || existing?.mobile || null,
+      planId: input.planId,
+      pineOrderId: pineOrderId || existing?.pineOrderId || null,
+      merchantOrderReference,
+      status: 'pending' as const,
+    };
+
+    if (existing) {
+      const [updated] = await this.db
+        .update(subscriptions)
+        .set(payload)
+        .where(eq(subscriptions.id, existing.id))
+        .returning();
+      return this.toPublic(updated ?? existing);
+    }
+
+    const [created] = await this.db.insert(subscriptions).values(payload).returning();
+    return created ? this.toPublic(created) : null;
+  }
+
+  async getCheckoutIntent(input: { pineOrderId?: string | null; merchantOrderReference?: string | null }) {
+    const row = await this.findCheckoutRow(input);
+    return row ? this.toPublic(row) : null;
+  }
+
+  private async findCheckoutRow(input: {
+    pineOrderId?: string | null;
+    merchantOrderReference?: string | null;
+  }) {
+    const pineOrderId = input.pineOrderId?.trim();
+    const merchantOrderReference = input.merchantOrderReference?.trim();
+    const clauses = [
+      pineOrderId ? eq(subscriptions.pineOrderId, pineOrderId) : undefined,
+      merchantOrderReference
+        ? eq(subscriptions.merchantOrderReference, merchantOrderReference)
+        : undefined,
+    ].filter(Boolean);
+    if (clauses.length === 0) return null;
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(or(...clauses))
+      .orderBy(desc(subscriptions.updatedAt))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async confirmPaymentReturn(input: {
+    pineOrderId?: string | null;
+    merchantOrderReference?: string | null;
+    email?: string | null;
+    mobile?: string | null;
+    planId?: string | null;
+    userId?: string | null;
+    status?: string | null;
+  }) {
+    const status = (input.status || '').trim().toLowerCase();
+    if (['failed', 'failure', 'cancelled', 'canceled'].includes(status)) {
+      return { ok: false as const, reason: 'failed' as const, email: null, subscription: null };
+    }
+
+    const row = await this.findCheckoutRow({
+      pineOrderId: input.pineOrderId,
+      merchantOrderReference: input.merchantOrderReference,
+    });
+
+    const pineOrderId = (input.pineOrderId || row?.pineOrderId || '').trim();
+    const merchantOrderReference =
+      (input.merchantOrderReference || row?.merchantOrderReference || '').trim() ||
+      (pineOrderId ? `hp-${pineOrderId}` : '');
+    const email = this.normalizeEmail(input.email || row?.email || '');
+    const planId = (input.planId || row?.planId || '').trim();
+    const userId = (input.userId || row?.userId || '').trim();
+    const mobile = input.mobile || row?.mobile || null;
+    const plan = getPricingPlan(planId);
+
+    if (!pineOrderId || !merchantOrderReference || !email.includes('@') || !plan) {
+      throw new Error('Could not confirm this payment');
+    }
+
+    const result = await this.activateSubscription({
+      pineOrderId,
+      merchantOrderReference,
+      email,
+      mobile,
+      planId: plan.id,
+      amountPaise: plan.amountPaise,
+      userId: userId || null,
+    });
+
+    return {
+      ok: true as const,
+      reason: 'activated' as const,
+      email,
+      planId: plan.id,
+      planName: plan.name,
+      alreadyProcessed: result.alreadyProcessed,
+      subscription: result.subscription,
+    };
   }
 
   async activateSubscription(input: {
