@@ -17,7 +17,11 @@ export const DB = Symbol('DB');
             'DATABASE_URL is missing. Copy it from Hybrid Pro Mobile App/.env.local into hybrid-pro-api/.env',
           );
         }
-        const client = postgres(url, { prepare: false, ssl: 'require' });
+        const client = postgres(url, {
+          prepare: false,
+          ssl: 'require',
+          max: 4,
+        });
         return drizzle(client, { schema });
       },
     },

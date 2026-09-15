@@ -1,6 +1,10 @@
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module.js';
-import { HttpErrorFilter } from './http-error.filter.js';
+import dns from 'node:dns';
+
+dns.setDefaultResultOrder('ipv4first');
+
+const { NestFactory } = await import('@nestjs/core');
+const { AppModule } = await import('./app.module.js');
+const { HttpErrorFilter } = await import('./http-error.filter.js');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
