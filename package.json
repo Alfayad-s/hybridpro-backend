@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "prepare": "node .husky/install.mjs",
+    "prepare": "node --input-type=module -e \"import { existsSync } from 'node:fs'; if (process.env.NODE_ENV === 'production' || process.env.CI === 'true' || process.env.HUSKY === '0' || !existsSync('.husky/install.mjs')) process.exit(0); await import('./.husky/install.mjs')\"",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "dev": "nest start --watch",
