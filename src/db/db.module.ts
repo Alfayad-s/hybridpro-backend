@@ -46,6 +46,27 @@ export const DB = Symbol('DB');
             updated_at timestamp
           )
         `;
+        await client`
+          CREATE TABLE IF NOT EXISTS coach_notes (
+            subscription_id uuid PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+            body text NOT NULL DEFAULT '',
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS coach_checkins (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            subscription_id uuid REFERENCES subscriptions(id) ON DELETE CASCADE NOT NULL,
+            email text NOT NULL,
+            checkin_date text NOT NULL,
+            weight text,
+            adherence text,
+            client_update text,
+            coach_reply text,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS coach_checkins_sub_idx ON coach_checkins (subscription_id, created_at)`;
         return drizzle(client, { schema });
       },
     },

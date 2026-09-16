@@ -91,3 +91,30 @@ export const subscriptionEvents = pgTable(
     index('subscription_events_email_idx').on(t.email),
   ],
 );
+
+export const coachNotes = pgTable('coach_notes', {
+  subscriptionId: uuid('subscription_id')
+    .primaryKey()
+    .references(() => subscriptions.id, { onDelete: 'cascade' })
+    .notNull(),
+  body: text('body').default('').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const coachCheckins = pgTable(
+  'coach_checkins',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id')
+      .references(() => subscriptions.id, { onDelete: 'cascade' })
+      .notNull(),
+    email: text('email').notNull(),
+    checkinDate: text('checkin_date').notNull(),
+    weight: text('weight'),
+    adherence: text('adherence'),
+    clientUpdate: text('client_update'),
+    coachReply: text('coach_reply'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('coach_checkins_sub_idx').on(t.subscriptionId, t.createdAt)],
+);

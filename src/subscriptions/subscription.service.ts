@@ -23,7 +23,8 @@ export type SubscriptionEventAction =
   | 'upgraded'
   | 'granted'
   | 'extended'
-  | 'cancelled';
+  | 'cancelled'
+  | 'changed';
 
 export type PublicSubscription = {
   id: string;
@@ -986,6 +987,40 @@ export class SubscriptionService {
       email: updated.email,
       planId: updated.planId,
       action: 'cancelled',
+      startsAt: updated.startsAt,
+      expiresAt: updated.expiresAt,
+      amountPaise: 0,
+    });
+    return this.toPublic(updated);
+  }
+
+  async changePlan(id: string, planId: string) {
+    if (!isPricingPlanId(planId)) throw new Error('Invalid plan');
+    const [row] = await this.db.select().from(subscriptions).where(eq(subscriptions.id, id)).limit(1);
+    if (!row) throw new Error('Client not found');
+    const current = await this.expireIfNeeded(row);
+    if (current.planId === planId) throw new Error('Client is already on this plan');
+    const live = this.isLive(current);
+    if (!live) throw new Error('Extend or grant access before changing plan');
+
+    const incomingRank = planRank(planId);
+    const currentRank = planRank(current.planId);
+    const action: SubscriptionEventAction = incomingRank > currentRank ? 'upgraded' : 'changed';
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        planId,
+        nextPlanId: null,
+        status: 'active',
+      })
+      .where(eq(subscriptions.id, current.id))
+      .returning();
+    if (!updated) throw new Error('Could not change plan');
+    await this.recordEvent({
+      subscriptionId: updated.id,
+      email: updated.email,
+      planId,
+      action,
       startsAt: updated.startsAt,
       expiresAt: updated.expiresAt,
       amountPaise: 0,

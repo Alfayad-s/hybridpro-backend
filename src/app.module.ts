@@ -5,6 +5,7 @@ import { AdminController } from './admin/admin.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { CoachGuard } from './auth/coach.guard.js';
 import { InternalGuard } from './auth/internal.guard.js';
+import { CoachingService } from './coaching/coaching.service.js';
 import { ContactController } from './contact/contact.controller.js';
 import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
@@ -34,6 +35,6 @@ import { SubscriptionService } from './subscriptions/subscription.service.js';
     ContactController,
     AdminController,
   ],
-  providers: [SubscriptionService, ContactService, AuthService, InternalGuard, CoachGuard],
+  providers: [SubscriptionService, CoachingService, ContactService, AuthService, InternalGuard, CoachGuard],
 })
 export class AppModule {}

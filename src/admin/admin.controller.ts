@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service.js';
 import { CoachGuard } from '../auth/coach.guard.js';
+import { CoachingService } from '../coaching/coaching.service.js';
 import { ContactService } from '../contact/contact.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
 
@@ -20,6 +21,7 @@ export class AdminController {
   constructor(
     private readonly auth: AuthService,
     private readonly subscriptions: SubscriptionService,
+    private readonly coaching: CoachingService,
     private readonly contacts: ContactService,
   ) {}
 
@@ -79,19 +81,45 @@ export class AdminController {
   async detail(@Param('id') id: string) {
     const detail = await this.subscriptions.getClientDetail(id);
     if (!detail) throw new NotFoundException('Client not found');
-    return detail;
+    const desk = await this.coaching.getDesk(id);
+    return { ...detail, ...desk };
   }
 
   @Patch('clients/:id')
   @UseGuards(CoachGuard)
-  async update(@Param('id') id: string, @Body() body: { action?: string; days?: number }) {
+  async update(
+    @Param('id') id: string,
+    @Body() body: { action?: string; days?: number; planId?: string; notes?: string },
+  ) {
     if (body.action === 'extend') {
       return { subscription: await this.subscriptions.extendSubscription(id, body.days || 30) };
     }
     if (body.action === 'cancel') {
       return { subscription: await this.subscriptions.cancelSubscription(id) };
     }
+    if (body.action === 'change_plan') {
+      return { subscription: await this.subscriptions.changePlan(id, body.planId || '') };
+    }
+    if (body.action === 'save_notes') {
+      return this.coaching.saveNotes(id, body.notes || '');
+    }
     throw new BadRequestException('Unknown action');
+  }
+
+  @Post('clients/:id/checkins')
+  @UseGuards(CoachGuard)
+  addCheckin(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      checkinDate?: string;
+      weight?: string;
+      adherence?: string;
+      clientUpdate?: string;
+      coachReply?: string;
+    },
+  ) {
+    return this.coaching.addCheckin(id, body).then((checkin) => ({ checkin }));
   }
 
   @Get('contacts')
@@ -105,9 +133,33 @@ export class AdminController {
   async contactDetail(@Param('id') id: string) {
     const submission = await this.contacts.getById(id);
     if (!submission) throw new NotFoundException('Submission not found');
-    if (submission.status === 'new') {
-      return { submission: (await this.contacts.markRead(id)) ?? submission };
-    }
-    return { submission };
+    const current =
+      submission.status === 'new'
+        ? ((await this.contacts.markRead(id)) ?? submission)
+        : submission;
+    const client = await this.subscriptions.getSubscriptionForIdentity({ email: current.email });
+    return {
+      submission: current,
+      clientId: client?.id ?? null,
+      clientStatus: client?.status ?? null,
+      clientPlan: client?.planName ?? null,
+    };
+  }
+
+  @Post('contacts/:id/grant')
+  @UseGuards(CoachGuard)
+  async grantContact(@Param('id') id: string, @Body() body: { planId?: string }) {
+    const submission = await this.contacts.getById(id);
+    if (!submission) throw new NotFoundException('Submission not found');
+    const result = await this.subscriptions.grantSubscription({
+      email: submission.email,
+      mobile: submission.phone || undefined,
+      planId: body.planId || 'performance',
+    });
+    const converted = await this.contacts.markConverted(id);
+    return {
+      submission: converted ?? submission,
+      subscription: result.subscription,
+    };
   }
 }

@@ -67,6 +67,15 @@ export class ContactService {
     return row ? this.toPublic(row) : null;
   }
 
+  async markConverted(id: string) {
+    const [row] = await this.db
+      .update(contactSubmissions)
+      .set({ status: 'converted' })
+      .where(eq(contactSubmissions.id, id))
+      .returning();
+    return row ? this.toPublic(row) : null;
+  }
+
   private toPublic(row: typeof contactSubmissions.$inferSelect | undefined) {
     if (!row) return null;
     return {
