@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
-import { payments, profiles, subscriptions } from '../db/schema.js';
+import { payments, profiles, subscriptionEvents, subscriptions } from '../db/schema.js';
 import {
   getPricingPlan,
   isPricingPlanId,
@@ -12,9 +12,18 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ACCESS_DAYS = 30;
+const EXPIRING_SOON_DAYS = 7;
 
 type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
 type SubscriptionRecord = typeof subscriptions.$inferSelect;
+
+export type SubscriptionEventAction =
+  | 'activated'
+  | 'renewed'
+  | 'upgraded'
+  | 'granted'
+  | 'extended'
+  | 'cancelled';
 
 export type PublicSubscription = {
   id: string;
@@ -26,6 +35,7 @@ export type PublicSubscription = {
   status: string;
   startsAt: string | null;
   expiresAt: string | null;
+  daysRemaining: number | null;
   nextPlanId: string | null;
   fullName: string | null;
   avatarUrl: string | null;
@@ -35,9 +45,63 @@ export type PublicSubscription = {
 export type AdminClientRow = PublicSubscription & {
   paymentCount: number;
   totalPaidPaise: number;
+  grantCount: number;
+  totalGrantedPaise: number;
   lastAmountPaise: number;
   lastPaidAt: string | null;
+  expiringSoon: boolean;
 };
+
+export type AdminPaymentRow = {
+  id: string;
+  subscriptionId: string | null;
+  email: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  planId: string;
+  planName: string;
+  amountPaise: number;
+  currency: string;
+  pineOrderId: string | null;
+  status: 'paid' | 'granted';
+  paidAt: string;
+};
+
+export type AdminSubscriptionEvent = {
+  id: string;
+  action: string;
+  planId: string;
+  planName: string;
+  startsAt: string | null;
+  expiresAt: string | null;
+  amountPaise: number | null;
+  createdAt: string;
+};
+
+function isGrantedPayment(item: { status: string; pineOrderId?: string | null }) {
+  if (item.status === 'granted') return true;
+  return Boolean(item.pineOrderId?.startsWith('coach-'));
+}
+
+function paymentKind(item: { status: string; pineOrderId?: string | null }): 'paid' | 'granted' {
+  return isGrantedPayment(item) ? 'granted' : 'paid';
+}
+
+function parseDayStart(value?: string) {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const [year, month, day] = raw.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+}
+
+function parseDayEnd(value?: string) {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const [year, month, day] = raw.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+}
 
 @Injectable()
 export class SubscriptionService {
@@ -64,6 +128,12 @@ export class SubscriptionService {
     return row.status === 'active' || Boolean(expiresAt);
   }
 
+  private daysRemainingFor(row: SubscriptionRecord, live = this.isLive(row)) {
+    const expiresAt = this.asDate(row.expiresAt);
+    if (!live || !expiresAt) return null;
+    return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / DAY_MS));
+  }
+
   private toPublic(
     row: SubscriptionRecord,
     profile?: { fullName: string | null; avatarUrl: string | null } | null,
@@ -72,6 +142,8 @@ export class SubscriptionService {
     const plan = getPricingPlan(row.planId);
     const startsAt = this.asDate(row.startsAt);
     const expiresAt = this.asDate(row.expiresAt);
+    const live = this.isLive(row);
+    const daysRemaining = this.daysRemainingFor(row, live);
     return {
       id: row.id,
       userId: row.userId,
@@ -79,13 +151,56 @@ export class SubscriptionService {
       mobile: row.mobile,
       planId: row.planId,
       planName: plan?.name || row.planId,
-      status: this.isLive(row) ? 'active' : row.status,
+      status: live ? 'active' : row.status,
       startsAt: startsAt ? startsAt.toISOString() : null,
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      daysRemaining,
       nextPlanId: row.nextPlanId,
       fullName: profile?.fullName ?? null,
       avatarUrl: profile?.avatarUrl ?? null,
       appLinked: Boolean(row.userId),
+    };
+  }
+
+  private async recordEvent(input: {
+    subscriptionId: string;
+    email: string;
+    planId: string;
+    action: SubscriptionEventAction;
+    startsAt?: Date | string | null;
+    expiresAt?: Date | string | null;
+    amountPaise?: number | null;
+  }) {
+    const startsAt = this.asDate(input.startsAt ?? null);
+    const expiresAt = this.asDate(input.expiresAt ?? null);
+    try {
+      await this.db.insert(subscriptionEvents).values({
+        subscriptionId: input.subscriptionId,
+        email: this.normalizeEmail(input.email),
+        planId: input.planId,
+        action: input.action,
+        startsAt,
+        expiresAt,
+        amountPaise: input.amountPaise ?? null,
+      });
+    } catch (error) {
+      console.error('[subscription_events]', error);
+    }
+  }
+
+  private toEventRow(row: typeof subscriptionEvents.$inferSelect): AdminSubscriptionEvent {
+    const plan = getPricingPlan(row.planId);
+    const startsAt = this.asDate(row.startsAt);
+    const expiresAt = this.asDate(row.expiresAt);
+    return {
+      id: row.id,
+      action: row.action,
+      planId: row.planId,
+      planName: plan?.name || row.planId,
+      startsAt: startsAt ? startsAt.toISOString() : null,
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      amountPaise: row.amountPaise,
+      createdAt: row.createdAt.toISOString(),
     };
   }
 
@@ -185,15 +300,99 @@ export class SubscriptionService {
     };
   }
 
-  private async profilesByUserIds(userIds: Array<string | null | undefined>) {
-    const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
-    if (ids.length === 0) {
-      return new Map<string, { fullName: string | null; avatarUrl: string | null }>();
+  private missingRelation(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /relation .* does not exist/i.test(message);
+  }
+
+  private asRows<T>(result: unknown): T[] {
+    if (Array.isArray(result)) return result as T[];
+    if (
+      result &&
+      typeof result === 'object' &&
+      'rows' in result &&
+      Array.isArray((result as { rows: unknown }).rows)
+    ) {
+      return (result as { rows: T[] }).rows;
     }
-    const rows = await this.db.select().from(profiles).where(inArray(profiles.id, ids));
-    return new Map(
-      rows.map((row) => [row.id, { fullName: row.fullName, avatarUrl: row.avatarUrl }]),
-    );
+    return [];
+  }
+
+  private async profilesByUserIds(userIds: Array<string | null | undefined>) {
+    const empty = new Map<string, { fullName: string | null; avatarUrl: string | null }>();
+    const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+    if (ids.length === 0) return empty;
+
+    try {
+      const rows = await this.db.select().from(profiles).where(inArray(profiles.id, ids));
+      if (rows.length > 0) {
+        return new Map(
+          rows.map((row) => [row.id, { fullName: row.fullName, avatarUrl: row.avatarUrl }]),
+        );
+      }
+    } catch (error) {
+      if (!this.missingRelation(error)) console.error('[profiles]', error);
+    }
+
+    try {
+      const result = await this.db.execute(sql`
+        select
+          id::text as id,
+          coalesce(
+            raw_user_meta_data->>'full_name',
+            raw_user_meta_data->>'name',
+            split_part(email, '@', 1)
+          ) as "fullName",
+          coalesce(
+            raw_user_meta_data->>'avatar_url',
+            raw_user_meta_data->>'picture'
+          ) as "avatarUrl"
+        from auth.users
+        where id::text in (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )})
+      `);
+      const rows = this.asRows<{
+        id: string;
+        fullName: string | null;
+        avatarUrl: string | null;
+      }>(result);
+      return new Map(
+        rows.map((row) => [row.id, { fullName: row.fullName ?? null, avatarUrl: row.avatarUrl ?? null }]),
+      );
+    } catch (error) {
+      if (!this.missingRelation(error)) console.error('[auth.users]', error);
+      return empty;
+    }
+  }
+
+  private async profileIdsMatchingName(q: string) {
+    try {
+      const nameMatches = await this.db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(ilike(profiles.fullName, q));
+      if (nameMatches.length > 0) return nameMatches.map((row) => row.id);
+    } catch (error) {
+      if (!this.missingRelation(error)) console.error('[profiles]', error);
+    }
+
+    try {
+      const result = await this.db.execute(sql`
+        select id::text as id
+        from auth.users
+        where coalesce(
+          raw_user_meta_data->>'full_name',
+          raw_user_meta_data->>'name',
+          email
+        ) ilike ${q}
+      `);
+      return this.asRows<{ id: string }>(result).map((row) => row.id);
+    } catch (error) {
+      if (!this.missingRelation(error)) console.error('[auth.users]', error);
+      return [];
+    }
   }
 
   async attachSubscriptionToUser(input: { userId: string; email: string }) {
@@ -354,6 +553,8 @@ export class SubscriptionService {
     planId: string;
     amountPaise: number;
     userId?: string | null;
+    paymentStatus?: 'paid' | 'granted';
+    eventAction?: SubscriptionEventAction;
   }) {
     if (!isPricingPlanId(input.planId)) throw new Error('Invalid plan');
 
@@ -459,6 +660,7 @@ export class SubscriptionService {
 
     if (!subscriptionId) throw new Error('Could not save subscription');
 
+    const paymentStatus = input.paymentStatus || 'paid';
     await this.db.insert(payments).values({
       subscriptionId,
       email,
@@ -466,7 +668,7 @@ export class SubscriptionService {
       amountPaise: input.amountPaise,
       currency: 'INR',
       pineOrderId,
-      status: 'paid',
+      status: paymentStatus,
       paidAt: now,
     });
 
@@ -475,20 +677,44 @@ export class SubscriptionService {
       .from(subscriptions)
       .where(eq(subscriptions.id, subscriptionId))
       .limit(1);
+
+    const eventAction =
+      input.eventAction ||
+      (!current
+        ? 'activated'
+        : currentActive && incomingRank > currentRank
+          ? 'upgraded'
+          : currentActive && incomingRank === currentRank
+            ? 'renewed'
+            : 'activated');
+
+    if (row) {
+      await this.recordEvent({
+        subscriptionId: row.id,
+        email,
+        planId: input.planId,
+        action: eventAction,
+        startsAt: row.startsAt,
+        expiresAt: row.expiresAt,
+        amountPaise: input.amountPaise,
+      });
+    }
+
     return { alreadyProcessed: false as const, subscription: row ? this.toPublic(row) : null };
   }
 
-  async listSubscriptions(input?: { q?: string; status?: string; planId?: string }) {
+  async listSubscriptions(input?: {
+    q?: string;
+    status?: string;
+    planId?: string;
+    expiringSoon?: boolean;
+  }) {
     const filters = [];
     if (input?.status) filters.push(eq(subscriptions.status, input.status));
     if (input?.planId) filters.push(eq(subscriptions.planId, input.planId));
     if (input?.q) {
       const q = `%${input.q.trim().toLowerCase()}%`;
-      const nameMatches = await this.db
-        .select({ id: profiles.id })
-        .from(profiles)
-        .where(ilike(profiles.fullName, q));
-      const nameIds = nameMatches.map((row) => row.id);
+      const nameIds = await this.profileIdsMatchingName(q);
       const identityClauses = [
         ilike(subscriptions.email, q),
         ilike(subscriptions.mobile, q),
@@ -513,22 +739,38 @@ export class SubscriptionService {
 
     const payBySub = new Map<
       string,
-      { totalPaidPaise: number; lastPaidAt: Date; lastAmountPaise: number; paymentCount: number }
+      {
+        totalPaidPaise: number;
+        totalGrantedPaise: number;
+        lastPaidAt: Date;
+        lastAmountPaise: number;
+        paymentCount: number;
+        grantCount: number;
+      }
     >();
     for (const item of payRows) {
-      if (!item.subscriptionId || item.status !== 'paid') continue;
+      if (!item.subscriptionId) continue;
+      if (item.status !== 'paid' && item.status !== 'granted') continue;
+      const granted = isGrantedPayment(item);
       const current = payBySub.get(item.subscriptionId);
       if (!current) {
         payBySub.set(item.subscriptionId, {
-          totalPaidPaise: item.amountPaise,
+          totalPaidPaise: granted ? 0 : item.amountPaise,
+          totalGrantedPaise: granted ? item.amountPaise : 0,
           lastPaidAt: item.paidAt,
           lastAmountPaise: item.amountPaise,
-          paymentCount: 1,
+          paymentCount: granted ? 0 : 1,
+          grantCount: granted ? 1 : 0,
         });
         continue;
       }
-      current.totalPaidPaise += item.amountPaise;
-      current.paymentCount += 1;
+      if (granted) {
+        current.totalGrantedPaise += item.amountPaise;
+        current.grantCount += 1;
+      } else {
+        current.totalPaidPaise += item.amountPaise;
+        current.paymentCount += 1;
+      }
       if (item.paidAt > current.lastPaidAt) {
         current.lastPaidAt = item.paidAt;
         current.lastAmountPaise = item.amountPaise;
@@ -542,17 +784,29 @@ export class SubscriptionService {
         row.userId ? profileByUserId.get(row.userId) ?? null : null,
       );
       if (!pub) continue;
+      if (input?.status && pub.status !== input.status) continue;
       const pay = payBySub.get(row.id);
+      const expiringSoon =
+        pub.status === 'active' &&
+        pub.daysRemaining != null &&
+        pub.daysRemaining <= EXPIRING_SOON_DAYS;
+      if (input?.expiringSoon && !expiringSoon) continue;
       clients.push({
         ...pub,
         paymentCount: pay?.paymentCount ?? 0,
         totalPaidPaise: pay?.totalPaidPaise ?? 0,
+        grantCount: pay?.grantCount ?? 0,
+        totalGrantedPaise: pay?.totalGrantedPaise ?? 0,
         lastAmountPaise: pay?.lastAmountPaise ?? 0,
         lastPaidAt: pay?.lastPaidAt ? pay.lastPaidAt.toISOString() : null,
+        expiringSoon,
       });
     }
 
     clients.sort((a, b) => {
+      if (input?.expiringSoon) {
+        return (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999);
+      }
       const aActive = a.status === 'active' ? 0 : 1;
       const bActive = b.status === 'active' ? 0 : 1;
       if (aActive !== bActive) return aActive - bActive;
@@ -569,6 +823,7 @@ export class SubscriptionService {
     const now = Date.now();
     let active = 0;
     let expired = 0;
+    let expiringSoon = 0;
     const byPlan: Record<string, number> = { foundation: 0, performance: 0, elite: 0 };
 
     for (const row of rows) {
@@ -576,18 +831,43 @@ export class SubscriptionService {
       if (isActive) {
         active += 1;
         if (row.planId in byPlan) byPlan[row.planId] += 1;
+        const days = this.daysRemainingFor(row, true);
+        if (days != null && days <= EXPIRING_SOON_DAYS) expiringSoon += 1;
       } else {
         expired += 1;
       }
     }
 
     const payRows = await this.db.select().from(payments);
-    const paid = payRows.filter((item) => item.status === 'paid');
-    const paidOrders = paid.length;
-    const revenuePaise = paid.reduce((sum, item) => sum + item.amountPaise, 0);
-    const paidClients = new Set(paid.map((item) => item.subscriptionId).filter(Boolean)).size;
+    let paidOrders = 0;
+    let revenuePaise = 0;
+    let grantedOrders = 0;
+    let grantedPaise = 0;
+    const paidClientIds = new Set<string>();
+    for (const item of payRows) {
+      if (item.status !== 'paid' && item.status !== 'granted') continue;
+      if (isGrantedPayment(item)) {
+        grantedOrders += 1;
+        grantedPaise += item.amountPaise;
+        continue;
+      }
+      paidOrders += 1;
+      revenuePaise += item.amountPaise;
+      if (item.subscriptionId) paidClientIds.add(item.subscriptionId);
+    }
 
-    return { total: rows.length, active, expired, byPlan, paidOrders, paidClients, revenuePaise };
+    return {
+      total: rows.length,
+      active,
+      expired,
+      expiringSoon,
+      byPlan,
+      paidOrders,
+      paidClients: paidClientIds.size,
+      revenuePaise,
+      grantedOrders,
+      grantedPaise,
+    };
   }
 
   async getClientDetail(id: string) {
@@ -601,18 +881,49 @@ export class SubscriptionService {
       .where(eq(payments.subscriptionId, current.id))
       .orderBy(desc(payments.paidAt));
 
+    let eventRows: (typeof subscriptionEvents.$inferSelect)[] = [];
+    try {
+      eventRows = await this.db
+        .select()
+        .from(subscriptionEvents)
+        .where(eq(subscriptionEvents.subscriptionId, current.id))
+        .orderBy(desc(subscriptionEvents.createdAt));
+    } catch (error) {
+      console.error('[subscription_events]', error);
+    }
+
+    const events =
+      eventRows.length > 0
+        ? eventRows.map((item) => this.toEventRow(item))
+        : history.map((item) => {
+            const plan = getPricingPlan(item.planId);
+            return {
+              id: item.id,
+              action: isGrantedPayment(item) ? 'granted' : 'activated',
+              planId: item.planId,
+              planName: plan?.name || item.planId,
+              startsAt: null,
+              expiresAt: null,
+              amountPaise: item.amountPaise,
+              createdAt: item.paidAt.toISOString(),
+            } satisfies AdminSubscriptionEvent;
+          });
+
+    const subscription = this.toPublic(
+      current,
+      current.userId ? profileByUserId.get(current.userId) ?? null : null,
+    );
+
     return {
-      subscription: this.toPublic(
-        current,
-        current.userId ? profileByUserId.get(current.userId) ?? null : null,
-      ),
+      subscription,
+      events,
       payments: history.map((item) => ({
         id: item.id,
         planId: item.planId,
         amountPaise: item.amountPaise,
         currency: item.currency,
         pineOrderId: item.pineOrderId,
-        status: item.status,
+        status: paymentKind(item),
         paidAt: item.paidAt.toISOString(),
       })),
     };
@@ -630,6 +941,8 @@ export class SubscriptionService {
       planId: input.planId,
       amountPaise: plan.amountPaise,
       userId: input.userId,
+      paymentStatus: 'granted',
+      eventAction: 'granted',
     });
   }
 
@@ -647,6 +960,17 @@ export class SubscriptionService {
       })
       .where(eq(subscriptions.id, id))
       .returning();
+    if (updated) {
+      await this.recordEvent({
+        subscriptionId: updated.id,
+        email: updated.email,
+        planId: updated.planId,
+        action: 'extended',
+        startsAt: updated.startsAt,
+        expiresAt: updated.expiresAt,
+        amountPaise: 0,
+      });
+    }
     return updated ? this.toPublic(updated) : null;
   }
 
@@ -657,6 +981,120 @@ export class SubscriptionService {
       .where(eq(subscriptions.id, id))
       .returning();
     if (!updated) throw new Error('Client not found');
+    await this.recordEvent({
+      subscriptionId: updated.id,
+      email: updated.email,
+      planId: updated.planId,
+      action: 'cancelled',
+      startsAt: updated.startsAt,
+      expiresAt: updated.expiresAt,
+      amountPaise: 0,
+    });
     return this.toPublic(updated);
+  }
+
+  async listPayments(input?: {
+    q?: string;
+    planId?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+  }) {
+    const filters = [];
+    const from = parseDayStart(input?.from);
+    const to = parseDayEnd(input?.to);
+    if (input?.planId) filters.push(eq(payments.planId, input.planId));
+    if (from) filters.push(gte(payments.paidAt, from));
+    if (to) filters.push(lte(payments.paidAt, to));
+    if (input?.q) {
+      const q = `%${input.q.trim().toLowerCase()}%`;
+      const nameIds = await this.profileIdsMatchingName(q);
+      const matchingSubs =
+        nameIds.length > 0
+          ? await this.db
+              .select({ id: subscriptions.id })
+              .from(subscriptions)
+              .where(inArray(subscriptions.userId, nameIds))
+          : [];
+      const subIds = matchingSubs.map((row) => row.id);
+      filters.push(
+        or(
+          ilike(payments.email, q),
+          ilike(payments.pineOrderId, q),
+          ...(subIds.length ? [inArray(payments.subscriptionId, subIds)] : []),
+        ),
+      );
+    }
+
+    const payRows = await this.db
+      .select()
+      .from(payments)
+      .where(filters.length ? and(...filters) : undefined)
+      .orderBy(desc(payments.paidAt))
+      .limit(1000);
+
+    const kindFiltered = payRows.filter((item) => {
+      if (item.status !== 'paid' && item.status !== 'granted') return false;
+      const kind = paymentKind(item);
+      if (input?.status === 'paid') return kind === 'paid';
+      if (input?.status === 'granted') return kind === 'granted';
+      return true;
+    });
+
+    const subIds = [
+      ...new Set(kindFiltered.map((item) => item.subscriptionId).filter((id): id is string => Boolean(id))),
+    ];
+    const subRows = subIds.length
+      ? await this.db.select().from(subscriptions).where(inArray(subscriptions.id, subIds))
+      : [];
+    const subById = new Map(subRows.map((row) => [row.id, row]));
+    const profileByUserId = await this.profilesByUserIds(subRows.map((row) => row.userId));
+
+    let collectedPaise = 0;
+    let grantedPaise = 0;
+    let orderCount = 0;
+    const payerEmails = new Set<string>();
+
+    const list: AdminPaymentRow[] = kindFiltered.slice(0, 500).map((item) => {
+      const kind = paymentKind(item);
+      const plan = getPricingPlan(item.planId);
+      const sub = item.subscriptionId ? subById.get(item.subscriptionId) : undefined;
+      const profile = sub?.userId ? profileByUserId.get(sub.userId) : undefined;
+      return {
+        id: item.id,
+        subscriptionId: item.subscriptionId,
+        email: item.email,
+        fullName: profile?.fullName ?? null,
+        avatarUrl: profile?.avatarUrl ?? null,
+        planId: item.planId,
+        planName: plan?.name || item.planId,
+        amountPaise: item.amountPaise,
+        currency: item.currency,
+        pineOrderId: item.pineOrderId,
+        status: kind,
+        paidAt: item.paidAt.toISOString(),
+      };
+    });
+
+    for (const item of kindFiltered) {
+      const kind = paymentKind(item);
+      if (kind === 'granted') {
+        grantedPaise += item.amountPaise;
+        continue;
+      }
+      collectedPaise += item.amountPaise;
+      orderCount += 1;
+      payerEmails.add(item.email);
+    }
+
+    return {
+      payments: list,
+      totals: {
+        collectedPaise,
+        grantedPaise,
+        orderCount,
+        uniquePayers: payerEmails.size,
+      },
+    };
   }
 }

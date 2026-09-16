@@ -10,7 +10,7 @@ export const DB = Symbol('DB');
   providers: [
     {
       provide: DB,
-      useFactory: () => {
+      useFactory: async () => {
         const url = process.env.DATABASE_URL?.trim();
         if (!url || /USER:PASSWORD|localhost:5432\/hybridpro/.test(url)) {
           throw new Error(
@@ -22,6 +22,30 @@ export const DB = Symbol('DB');
           ssl: 'require',
           max: 4,
         });
+        await client`
+          CREATE TABLE IF NOT EXISTS subscription_events (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            subscription_id uuid REFERENCES subscriptions(id) ON DELETE CASCADE,
+            email text NOT NULL,
+            plan_id text NOT NULL,
+            action text NOT NULL,
+            starts_at timestamp,
+            expires_at timestamp,
+            amount_paise integer,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS subscription_events_sub_idx ON subscription_events (subscription_id, created_at)`;
+        await client`CREATE INDEX IF NOT EXISTS subscription_events_email_idx ON subscription_events (email)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS profiles (
+            id uuid PRIMARY KEY NOT NULL,
+            full_name text,
+            avatar_url text,
+            experience_level text,
+            updated_at timestamp
+          )
+        `;
         return drizzle(client, { schema });
       },
     },

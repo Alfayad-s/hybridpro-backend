@@ -70,3 +70,24 @@ export const payments = pgTable(
     index('payments_email_idx').on(t.email),
   ],
 );
+
+export const subscriptionEvents = pgTable(
+  'subscription_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id').references(() => subscriptions.id, {
+      onDelete: 'cascade',
+    }),
+    email: text('email').notNull(),
+    planId: text('plan_id').notNull(),
+    action: text('action').notNull(),
+    startsAt: timestamp('starts_at'),
+    expiresAt: timestamp('expires_at'),
+    amountPaise: integer('amount_paise'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('subscription_events_sub_idx').on(t.subscriptionId, t.createdAt),
+    index('subscription_events_email_idx').on(t.email),
+  ],
+);

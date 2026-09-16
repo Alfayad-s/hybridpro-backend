@@ -34,14 +34,34 @@ export class AdminController {
     return this.subscriptions.getSubscriptionStats();
   }
 
+  @Get('payments')
+  @UseGuards(CoachGuard)
+  payments(
+    @Query('q') q?: string,
+    @Query('planId') planId?: string,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.subscriptions.listPayments({ q, planId, status, from, to });
+  }
+
   @Get('clients')
   @UseGuards(CoachGuard)
   clients(
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('planId') planId?: string,
+    @Query('expiringSoon') expiringSoon?: string,
   ) {
-    return this.subscriptions.listSubscriptions({ q, status, planId }).then((clients) => ({ clients }));
+    return this.subscriptions
+      .listSubscriptions({
+        q,
+        status,
+        planId,
+        expiringSoon: expiringSoon === '1' || expiringSoon === 'true',
+      })
+      .then((clients) => ({ clients }));
   }
 
   @Post('clients')
