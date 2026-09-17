@@ -118,3 +118,39 @@ export const coachCheckins = pgTable(
   },
   (t) => [index('coach_checkins_sub_idx').on(t.subscriptionId, t.createdAt)],
 );
+
+export const userAppSync = pgTable('user_app_sync', {
+  userId: uuid('user_id').primaryKey().notNull(),
+  payload: text('payload').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const exerciseCategories = pgTable('exercise_categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  icon: text('icon'),
+});
+
+export const exercises = pgTable(
+  'exercises',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    instructions: text('instructions'),
+    categoryId: uuid('category_id'),
+    muscleGroup: text('muscle_group').notNull(),
+    targetMuscle: text('target_muscle').notNull(),
+    secondaryMuscles: text('secondary_muscles'),
+    anatomyView: text('anatomy_view'),
+    anatomyPrimary: text('anatomy_primary'),
+    anatomySecondary: text('anatomy_secondary'),
+    equipment: text('equipment'),
+    difficulty: text('difficulty'),
+    imageUrl: text('image_url'),
+    videoUrl: text('video_url'),
+    userId: uuid('user_id'),
+  },
+  (t) => [uniqueIndex('exercises_slug_uidx').on(t.slug)],
+);

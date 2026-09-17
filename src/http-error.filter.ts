@@ -16,10 +16,22 @@ function errorMessage(exception: unknown) {
       : typeof cause === 'string'
         ? cause
         : '';
-  if (nested && !exception.message.includes(nested)) {
-    return `${exception.message} (${nested})`;
+  const raw =
+    nested && !exception.message.includes(nested)
+      ? `${exception.message} (${nested})`
+      : exception.message;
+
+  // Hide noisy SQL dumps; surface a clear connectivity hint instead.
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|ECONNREFUSED|ETIMEDOUT|connect ECONN/i.test(raw)) {
+    return 'Cannot reach the database. Check your internet connection and DATABASE_URL (prefer the Supabase pooler host).';
   }
-  return exception.message;
+  if (/Failed query:/i.test(raw) && /ENOTFOUND|getaddrinfo/i.test(raw)) {
+    return 'Cannot reach the database. Check your internet connection and DATABASE_URL (prefer the Supabase pooler host).';
+  }
+  if (/Failed query:/i.test(raw)) {
+    return 'Database query failed. Please try again.';
+  }
+  return raw;
 }
 
 @Catch()

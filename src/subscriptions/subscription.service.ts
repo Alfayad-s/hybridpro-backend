@@ -84,6 +84,13 @@ function isGrantedPayment(item: { status: string; pineOrderId?: string | null })
   return Boolean(item.pineOrderId?.startsWith('coach-'));
 }
 
+function localDayKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function paymentKind(item: { status: string; pineOrderId?: string | null }): 'paid' | 'granted' {
   return isGrantedPayment(item) ? 'granted' : 'paid';
 }
@@ -857,6 +864,8 @@ export class SubscriptionService {
       if (item.subscriptionId) paidClientIds.add(item.subscriptionId);
     }
 
+    const trends = this.buildDailyTrends(rows, payRows, 14);
+
     return {
       total: rows.length,
       active,
@@ -868,7 +877,53 @@ export class SubscriptionService {
       revenuePaise,
       grantedOrders,
       grantedPaise,
+      trends,
     };
+  }
+
+  private buildDailyTrends(
+    subscriptionRows: (typeof subscriptions.$inferSelect)[],
+    paymentRows: (typeof payments.$inferSelect)[],
+    days: number,
+  ) {
+    const dayKeys: string[] = [];
+    const revenuePaise: number[] = [];
+    const paidOrders: number[] = [];
+    const signups: number[] = [];
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const key = localDayKey(d);
+      dayKeys.push(key);
+      revenuePaise.push(0);
+      paidOrders.push(0);
+      signups.push(0);
+    }
+
+    const indexByDay = new Map(dayKeys.map((key, index) => [key, index]));
+
+    for (const item of paymentRows) {
+      if (item.status !== 'paid' && item.status !== 'granted') continue;
+      if (isGrantedPayment(item)) continue;
+      const key = localDayKey(item.paidAt);
+      const index = indexByDay.get(key);
+      if (index == null) continue;
+      revenuePaise[index] += item.amountPaise;
+      paidOrders[index] += 1;
+    }
+
+    for (const row of subscriptionRows) {
+      const key = localDayKey(row.createdAt);
+      const index = indexByDay.get(key);
+      if (index == null) continue;
+      signups[index] += 1;
+    }
+
+    return { days: dayKeys, revenuePaise, paidOrders, signups };
   }
 
   async getClientDetail(id: string) {

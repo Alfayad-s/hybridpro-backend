@@ -67,6 +67,35 @@ export const DB = Symbol('DB');
           )
         `;
         await client`CREATE INDEX IF NOT EXISTS coach_checkins_sub_idx ON coach_checkins (subscription_id, created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS exercise_categories (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            name text NOT NULL UNIQUE,
+            icon text
+          )
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS exercises (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            slug text NOT NULL UNIQUE,
+            name text NOT NULL,
+            description text,
+            instructions text,
+            category_id uuid,
+            muscle_group text NOT NULL,
+            target_muscle text NOT NULL,
+            secondary_muscles text,
+            anatomy_view text,
+            anatomy_primary text,
+            anatomy_secondary text,
+            equipment text,
+            difficulty text,
+            image_url text,
+            video_url text,
+            user_id uuid
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS exercises_slug_uidx ON exercises (slug)`;
         return drizzle(client, { schema });
       },
     },
