@@ -5,12 +5,14 @@ import { AdminController } from './admin/admin.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { CoachGuard } from './auth/coach.guard.js';
 import { InternalGuard } from './auth/internal.guard.js';
+import { MemberGuard } from './auth/member.guard.js';
 import { CheckinsController } from './checkins/checkins.controller.js';
 import { CoachingService } from './coaching/coaching.service.js';
 import { ContactController } from './contact/contact.controller.js';
 import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
 import { HealthController } from './health.controller.js';
+import { MeController } from './me/me.controller.js';
 import { CloudinaryService } from './media/cloudinary.service.js';
 import { PaymentsController } from './payments/payments.controller.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
@@ -41,6 +43,7 @@ import { WorkoutService } from './workout/workout.service.js';
     ContactController,
     AdminController,
     ExercisesController,
+    MeController,
   ],
   providers: [
     SubscriptionService,
@@ -52,6 +55,7 @@ import { WorkoutService } from './workout/workout.service.js';
     CloudinaryService,
     InternalGuard,
     CoachGuard,
+    MemberGuard,
   ],
 })
 export class AppModule {}

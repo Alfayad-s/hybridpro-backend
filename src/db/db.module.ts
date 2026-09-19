@@ -96,6 +96,13 @@ export const DB = Symbol('DB');
           )
         `;
         await client`CREATE UNIQUE INDEX IF NOT EXISTS exercises_slug_uidx ON exercises (slug)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS user_app_sync (
+            user_id uuid PRIMARY KEY NOT NULL,
+            payload text NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
         return drizzle(client, { schema });
       },
     },

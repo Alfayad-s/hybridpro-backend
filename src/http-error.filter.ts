@@ -46,6 +46,13 @@ export class HttpErrorFilter implements ExceptionFilter {
     }
 
     const message = errorMessage(exception);
+    if (!(exception instanceof HttpException)) {
+      // Surface real DB/driver errors in server logs (client still gets sanitized message).
+      const err = exception instanceof Error ? exception : new Error(String(exception));
+      const cause = (err as Error & { cause?: unknown }).cause;
+      console.error('[HttpErrorFilter]', err.message);
+      if (cause) console.error('[HttpErrorFilter] cause:', cause);
+    }
     const status =
       /invalid|missing|required|unknown/i.test(message)
         ? HttpStatus.BAD_REQUEST

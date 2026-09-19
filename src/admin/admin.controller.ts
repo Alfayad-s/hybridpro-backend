@@ -287,9 +287,55 @@ export class AdminController {
         restSeconds?: number;
         notes?: string;
       }[];
+      days?: {
+        dayOfWeek: number;
+        name?: string;
+        muscleFocus?: string;
+        isRestDay?: boolean;
+        exercises?: {
+          exerciseId?: string;
+          targetSets?: number;
+          targetReps?: number;
+          restSeconds?: number;
+          notes?: string;
+        }[];
+      }[];
     },
   ) {
     return this.workouts.assignPlan(id, body);
+  }
+
+  @Patch('clients/:id/workout-plans/:planId')
+  @UseGuards(CoachGuard)
+  updatePlan(
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Body()
+    body: {
+      name?: string;
+      description?: string;
+      days?: {
+        dayOfWeek: number;
+        name?: string;
+        muscleFocus?: string;
+        isRestDay?: boolean;
+        exercises?: {
+          exerciseId?: string;
+          targetSets?: number;
+          targetReps?: number;
+          restSeconds?: number;
+          notes?: string;
+        }[];
+      }[];
+    },
+  ) {
+    return this.workouts.updatePlan(id, planId, body);
+  }
+
+  @Delete('clients/:id/workout-plans/:planId')
+  @UseGuards(CoachGuard)
+  unassignPlan(@Param('id') id: string, @Param('planId') planId: string) {
+    return this.workouts.unassignPlan(id, planId);
   }
 
   @Get('contacts')
