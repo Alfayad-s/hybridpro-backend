@@ -11,10 +11,16 @@ import { CoachingService } from './coaching/coaching.service.js';
 import { ContactController } from './contact/contact.controller.js';
 import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
+import { GymAttendanceService } from './gym/gym-attendance.service.js';
+import { ChatService } from './chat/chat.service.js';
 import { HealthController } from './health.controller.js';
 import { MeController } from './me/me.controller.js';
 import { CloudinaryService } from './media/cloudinary.service.js';
+import { DeviceTokensService } from './notifications/device-tokens.service.js';
+import { FcmService } from './notifications/fcm.service.js';
 import { PaymentsController } from './payments/payments.controller.js';
+import { EventsGateway } from './realtime/events.gateway.js';
+import { RealtimeFanoutService } from './realtime/realtime-fanout.service.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
 import { SubscriptionService } from './subscriptions/subscription.service.js';
 import { ExercisesController } from './workout/exercises.controller.js';
@@ -53,6 +59,12 @@ import { WorkoutService } from './workout/workout.service.js';
     ContactService,
     AuthService,
     CloudinaryService,
+    DeviceTokensService,
+    FcmService,
+    EventsGateway,
+    RealtimeFanoutService,
+    GymAttendanceService,
+    ChatService,
     InternalGuard,
     CoachGuard,
     MemberGuard,

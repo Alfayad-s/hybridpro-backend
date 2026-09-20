@@ -35,9 +35,18 @@ export class MemberGuard implements CanActivate {
     if (error || !data.user?.id) throw new UnauthorizedException();
 
     const email = (data.user.email || '').trim().toLowerCase();
+    const meta = (data.user.user_metadata || {}) as Record<string, unknown>;
+    const fullName = [meta.full_name, meta.name, meta.display_name]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .find((value) => value.length > 0);
+    const avatarUrl = [meta.avatar_url, meta.picture]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .find((value) => value.length > 0);
     request[MEMBER_USER_KEY] = {
       userId: data.user.id,
       email,
+      fullName: fullName || null,
+      avatarUrl: avatarUrl || null,
     };
     return true;
   }

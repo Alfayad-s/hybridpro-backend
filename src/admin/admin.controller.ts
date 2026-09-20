@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   NotFoundException,
   Param,
   Patch,
@@ -19,7 +20,10 @@ import { AuthService } from '../auth/auth.service.js';
 import { CoachGuard } from '../auth/coach.guard.js';
 import { CoachingService } from '../coaching/coaching.service.js';
 import { ContactService } from '../contact/contact.service.js';
+import { GymAttendanceService } from '../gym/gym-attendance.service.js';
+import { ChatService } from '../chat/chat.service.js';
 import { CloudinaryService } from '../media/cloudinary.service.js';
+import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
 import { ExercisesService } from '../workout/exercises.service.js';
 import { WorkoutService } from '../workout/workout.service.js';
@@ -39,11 +43,85 @@ export class AdminController {
     private readonly workouts: WorkoutService,
     private readonly exerciseCatalog: ExercisesService,
     private readonly cloudinary: CloudinaryService,
+    private readonly devices: DeviceTokensService,
+    private readonly gym: GymAttendanceService,
+    private readonly chat: ChatService,
   ) {}
 
   @Post('auth/login')
   login(@Body() body: { email?: string; password?: string }) {
     return this.auth.login(body.email || '', body.password || '');
+  }
+
+  @Post('devices')
+  @UseGuards(CoachGuard)
+  registerDevice(
+    @Headers('x-coach-email') coachEmail: string,
+    @Body() body: { token?: string; platform?: string },
+  ) {
+    return this.devices.registerCoach(coachEmail || '', body);
+  }
+
+  @Delete('devices')
+  @UseGuards(CoachGuard)
+  unregisterDevice(
+    @Headers('x-coach-email') coachEmail: string,
+    @Body() body: { token?: string },
+  ) {
+    return this.devices.unregisterCoach(coachEmail || '', body?.token);
+  }
+
+  @Get('gym/active')
+  @UseGuards(CoachGuard)
+  gymActive() {
+    return this.gym.listActive();
+  }
+
+  @Get('clients/:id/gym')
+  @UseGuards(CoachGuard)
+  clientGym(@Param('id') id: string) {
+    return this.gym.listForClient(id);
+  }
+
+  @Get('chat/inbox')
+  @UseGuards(CoachGuard)
+  chatInbox() {
+    return this.chat.inbox();
+  }
+
+  @Get('clients/:id/chat')
+  @UseGuards(CoachGuard)
+  clientChat(@Param('id') id: string, @Query('limit') limit?: string) {
+    return this.chat.getClientThread(id, limit ? Number(limit) : undefined);
+  }
+
+  @Get('clients/:id/chat/messages')
+  @UseGuards(CoachGuard)
+  clientChatMessages(
+    @Param('id') id: string,
+    @Query('before') before?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.chat.listClientMessages(id, {
+      before,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('clients/:id/chat/messages')
+  @UseGuards(CoachGuard)
+  sendClientChat(
+    @Param('id') id: string,
+    @Headers('x-coach-email') coachEmail: string,
+    @Body() body: { body?: string; imageUrl?: string },
+  ) {
+    return this.chat.sendCoachMessage(id, coachEmail || '', body);
+  }
+
+  @Post('clients/:id/chat/read')
+  @UseGuards(CoachGuard)
+  markClientChatRead(@Param('id') id: string) {
+    return this.chat.markCoachRead(id);
   }
 
   @Get('stats')

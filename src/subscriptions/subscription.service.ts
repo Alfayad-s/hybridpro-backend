@@ -146,8 +146,8 @@ export class SubscriptionService {
     row: SubscriptionRecord,
     profile?: { fullName: string | null; avatarUrl: string | null } | null,
   ): PublicSubscription | null {
-    if (!isPricingPlanId(row.planId)) return null;
     const plan = getPricingPlan(row.planId);
+    if (!plan && !row.planId) return null;
     const startsAt = this.asDate(row.startsAt);
     const expiresAt = this.asDate(row.expiresAt);
     const live = this.isLive(row);
@@ -157,7 +157,7 @@ export class SubscriptionService {
       userId: row.userId,
       email: row.email,
       mobile: row.mobile,
-      planId: row.planId,
+      planId: (plan?.id ?? row.planId) as PricingPlanId,
       planName: plan?.name || row.planId,
       status: live ? 'active' : row.status,
       startsAt: startsAt ? startsAt.toISOString() : null,
@@ -251,11 +251,15 @@ export class SubscriptionService {
     return updated ?? { ...row, status: 'expired' };
   }
 
+  private emailMatch(email: string) {
+    return sql`lower(trim(${subscriptions.email})) = ${email}`;
+  }
+
   private async findLatestForIdentity(input: { userId?: string | null; email?: string | null }) {
     const email = input.email ? this.normalizeEmail(input.email) : null;
     const clauses = [
       input.userId ? eq(subscriptions.userId, input.userId) : undefined,
-      email ? eq(subscriptions.email, email) : undefined,
+      email ? this.emailMatch(email) : undefined,
     ].filter(Boolean);
 
     if (clauses.length === 0) return null;
@@ -265,19 +269,9 @@ export class SubscriptionService {
       .from(subscriptions)
       .where(or(...clauses))
       .orderBy(desc(subscriptions.updatedAt))
-      .limit(10);
+      .limit(25);
 
-    const now = Date.now();
-    return (
-      rows.find((row) => {
-        if (row.status !== 'active' && row.status !== 'expired') return false;
-        const expiresAt = this.asDate(row.expiresAt);
-        if (expiresAt && expiresAt.getTime() <= now) return false;
-        return row.status === 'active' || Boolean(expiresAt);
-      }) ??
-      rows[0] ??
-      null
-    );
+    return rows.find((row) => this.isLive(row)) ?? rows[0] ?? null;
   }
 
   async getSubscriptionForIdentity(input: { userId?: string | null; email?: string | null }) {
@@ -408,7 +402,7 @@ export class SubscriptionService {
     await this.db
       .update(subscriptions)
       .set({ userId: input.userId })
-      .where(eq(subscriptions.email, email));
+      .where(this.emailMatch(email));
     return this.getSubscriptionForIdentity({ userId: input.userId, email });
   }
 

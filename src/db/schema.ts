@@ -5,6 +5,8 @@ export const profiles = pgTable('profiles', {
   fullName: text('full_name'),
   avatarUrl: text('avatar_url'),
   experienceLevel: text('experience_level'),
+  assessmentStatus: text('assessment_status'),
+  assessmentJson: text('assessment_json'),
   updatedAt: timestamp('updated_at'),
 });
 
@@ -153,4 +155,78 @@ export const exercises = pgTable(
     userId: uuid('user_id'),
   },
   (t) => [uniqueIndex('exercises_slug_uidx').on(t.slug)],
+);
+
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    role: text('role').notNull(),
+    userId: uuid('user_id'),
+    coachEmail: text('coach_email'),
+    token: text('token').notNull(),
+    platform: text('platform').notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('device_tokens_token_uidx').on(t.token),
+    index('device_tokens_member_idx').on(t.role, t.userId),
+    index('device_tokens_coach_idx').on(t.role, t.coachEmail),
+  ],
+);
+
+export const gymSessions = pgTable(
+  'gym_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id')
+      .references(() => subscriptions.id, { onDelete: 'cascade' })
+      .notNull(),
+    userId: uuid('user_id').notNull(),
+    checkedInAt: timestamp('checked_in_at').defaultNow().notNull(),
+    checkedOutAt: timestamp('checked_out_at'),
+    status: text('status').default('open').notNull(),
+  },
+  (t) => [
+    index('gym_sessions_user_idx').on(t.userId),
+    index('gym_sessions_sub_idx').on(t.subscriptionId),
+    index('gym_sessions_status_idx').on(t.status),
+  ],
+);
+
+export const coachConversations = pgTable(
+  'coach_conversations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id')
+      .references(() => subscriptions.id, { onDelete: 'cascade' })
+      .notNull(),
+    memberUserId: uuid('member_user_id').notNull(),
+    lastMessageAt: timestamp('last_message_at'),
+    memberLastReadAt: timestamp('member_last_read_at'),
+    coachLastReadAt: timestamp('coach_last_read_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('coach_conversations_sub_uidx').on(t.subscriptionId),
+    index('coach_conversations_member_idx').on(t.memberUserId),
+    index('coach_conversations_last_msg_idx').on(t.lastMessageAt),
+  ],
+);
+
+export const coachMessages = pgTable(
+  'coach_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .references(() => coachConversations.id, { onDelete: 'cascade' })
+      .notNull(),
+    senderRole: text('sender_role').notNull(),
+    senderUserId: uuid('sender_user_id'),
+    senderCoachEmail: text('sender_coach_email'),
+    body: text('body').notNull(),
+    imageUrl: text('image_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('coach_messages_conv_created_idx').on(t.conversationId, t.createdAt)],
 );

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import { subscriptions, userAppSync } from '../db/schema.js';
+import { RealtimeFanoutService } from '../realtime/realtime-fanout.service.js';
 import { WEEKDAY_LABELS } from './exercise-catalog.js';
 import { ExercisesService } from './exercises.service.js';
 
@@ -135,6 +136,7 @@ export class WorkoutService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly exercises: ExercisesService,
+    private readonly fanout: RealtimeFanoutService,
   ) {}
 
   listCatalog(q?: string) {
@@ -202,7 +204,23 @@ export class WorkoutService {
     };
 
     await this.writePayload(client.userId!, payload);
-    return { plan: this.toSummary(plan) };
+    const summary = this.toSummary(plan);
+    await this.fanout.toMember(
+      client.userId!,
+      'workout.assigned',
+      {
+        type: 'workout.assigned',
+        planId: plan.id,
+        planName: plan.name,
+        subscriptionId,
+        route: '/home',
+      },
+      {
+        title: 'New workout assigned',
+        body: `Your coach assigned “${plan.name}”`,
+      },
+    );
+    return { plan: summary };
   }
 
   async updatePlan(subscriptionId: string, planId: string, input: UpdatePlanInput) {
@@ -250,7 +268,23 @@ export class WorkoutService {
     };
 
     await this.writePayload(client.userId!, payload);
-    return { plan: this.toSummary(updated) };
+    const summary = this.toSummary(updated);
+    await this.fanout.toMember(
+      client.userId!,
+      'workout.updated',
+      {
+        type: 'workout.updated',
+        planId: updated.id,
+        planName: updated.name,
+        subscriptionId,
+        route: '/home',
+      },
+      {
+        title: 'Workout updated',
+        body: `Your coach updated “${updated.name}”`,
+      },
+    );
+    return { plan: summary };
   }
 
   async unassignPlan(subscriptionId: string, planId: string) {
@@ -272,6 +306,24 @@ export class WorkoutService {
     };
 
     await this.writePayload(client.userId!, payload);
+    const removed = existing[index];
+    await this.fanout.toMember(
+      client.userId!,
+      'workout.unassigned',
+      {
+        type: 'workout.unassigned',
+        planId,
+        planName: removed?.name || '',
+        subscriptionId,
+        route: '/home',
+      },
+      {
+        title: 'Workout removed',
+        body: removed?.name
+          ? `Your coach removed “${removed.name}”`
+          : 'Your coach removed an assigned workout',
+      },
+    );
     return { ok: true, planId };
   }
 
