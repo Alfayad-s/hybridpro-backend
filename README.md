@@ -47,16 +47,19 @@ COACH_PASSWORD=your-coach-password
 COACH_SESSION_SECRET=your-session-secret
 WEBSITE_URL=https://hybridpro.in
 APP_URL=https://app.hybridpro.in
-# Required for email OTP (Gmail app password — no spaces)
+# Required for email OTP
+# Railway Free/Hobby blocks SMTP — set RESEND_API_KEY (+ verified RESEND_FROM).
+# Local / Oracle VM can use Gmail SMTP instead:
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=support.hybridpro@gmail.com
 SMTP_PASS=your16charapppassword
 SMTP_FROM=Hybrid Pro <support.hybridpro@gmail.com>
+# RESEND_API_KEY=re_xxxxxxxx
+# RESEND_FROM=Hybrid Pro <noreply@hybridpro.in>
 GOOGLE_CLIENT_IDS=web-client-id,ios-client-id,android-client-id
 ```
-
 5. Deploy, then open `https://your-service.onrender.com/api/health`.
 6. On Vercel (website + app):
 

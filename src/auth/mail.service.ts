@@ -68,6 +68,7 @@ export class MailService {
 
   async sendOtpEmail(input: { to: string; code: string }) {
     const from =
+      process.env.RESEND_FROM?.trim() ||
       process.env.SMTP_FROM?.trim() ||
       process.env.EMAIL_FROM?.trim() ||
       process.env.SMTP_USER?.trim() ||
@@ -103,19 +104,31 @@ export class MailService {
       website,
     ].join('\n');
 
+    // Railway Free/Hobby blocks outbound SMTP (587/465) — use Resend HTTPS there.
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    if (resendKey) {
+      return this.sendViaResend({
+        apiKey: resendKey,
+        from,
+        to: input.to,
+        subject,
+        html,
+        text,
+      });
+    }
+
     const transporter = await this.getTransporter();
     if (!transporter) {
-      const missing = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS']
-        .filter((key) => !process.env[key]?.trim())
-        .join(', ');
-      this.logger.error(`SMTP not configured (missing ${missing || 'values'})`);
+      this.logger.error(
+        'Email not configured (set RESEND_API_KEY for Railway, or SMTP_* for hosts that allow SMTP)',
+      );
       if (process.env.NODE_ENV === 'production') {
         throw new ServiceUnavailableException(
-          'Email is not configured on the server. Set SMTP_HOST, SMTP_USER, SMTP_PASS.',
+          'Email is not configured. On Railway set RESEND_API_KEY (SMTP ports are blocked).',
         );
       }
       this.logger.warn(
-        `[dev] SMTP not configured — OTP for ${input.to}: ${input.code}`,
+        `[dev] email not configured — OTP for ${input.to}: ${input.code}`,
       );
       return { ok: true as const, delivered: false as const };
     }
@@ -141,7 +154,11 @@ export class MailService {
       const lower = message.toLowerCase();
       let clientMessage = 'Could not send email code. Please try again.';
       if (lower.includes('timed out') || lower.includes('timeout')) {
-        clientMessage = 'Email is taking too long. Please try again in a moment.';
+        this.logger.error(
+          'SMTP timeout usually means the host blocks outbound mail ports (Railway Free/Hobby). Set RESEND_API_KEY and use HTTPS instead.',
+        );
+        clientMessage =
+          'Email server unreachable from this host. Use RESEND_API_KEY on Railway, or deploy where SMTP is allowed.';
       } else if (
         lower.includes('invalid login') ||
         lower.includes('username and password') ||
@@ -154,6 +171,56 @@ export class MailService {
         clientMessage = 'Cannot reach the email server. Check SMTP_HOST.';
       }
       throw new ServiceUnavailableException(clientMessage);
+    }
+  }
+
+  private async sendViaResend(input: {
+    apiKey: string;
+    from: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }) {
+    try {
+      const response = await this.withTimeout(
+        fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${input.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: input.from,
+            to: [input.to],
+            subject: input.subject,
+            html: input.html,
+            text: input.text,
+          }),
+        }),
+        MailService.sendTimeoutMs,
+        'Resend request timed out.',
+      );
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.error(`Resend failed (${response.status}): ${body}`);
+        throw new ServiceUnavailableException(
+          response.status === 401 || response.status === 403
+            ? 'Resend API key rejected. Check RESEND_API_KEY.'
+            : 'Could not send email code. Please try again.',
+        );
+      }
+
+      this.logger.log(`OTP email sent via Resend to ${input.to}`);
+      return { ok: true as const, delivered: true as const };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Resend send failed: ${message}`);
+      throw new ServiceUnavailableException(
+        'Could not send email code. Please try again.',
+      );
     }
   }
 
