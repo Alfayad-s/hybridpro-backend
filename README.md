@@ -92,12 +92,22 @@ nano .env
 docker compose up -d --build
 ```
 
-8. Confirm `https://api.hybridpro.in/api/health` returns `{"ok":true,...}`.
-9. On Vercel (website + app) set:
+8. Confirm `https://api.hybridpro.in/api/health` returns `{"ok":true,"supabaseConfigured":true,...}`.
+9. On Vercel (website) set:
 
 ```bash
 HYBRID_BACKEND_URL=https://api.hybridpro.in
 INTERNAL_API_SECRET=same-as-backend
+PAYMENT_CALLBACK_BASE_URL=https://hybridpro.in
+NEXT_PUBLIC_SITE_URL=https://hybridpro.in
+NEXT_PUBLIC_APP_URL=https://hybridpro.in
 ```
 
-`.env` on the VM must include `DATABASE_URL` (Supabase), `INTERNAL_API_SECRET`, `COACH_EMAIL`, `COACH_PASSWORD`, `COACH_SESSION_SECRET`, `WEBSITE_URL=https://hybridpro.in`, `APP_URL=https://app.hybridpro.in`, and `PORT=3002`.
+`.env` on the VM **must** include:
+
+- `DATABASE_URL` (Supabase Postgres pooler)
+- `SUPABASE_URL` + `SUPABASE_ANON_KEY` (same project — required for `/api/me/*` and post-payment unlock)
+- `INTERNAL_API_SECRET`, `COACH_EMAIL`, `COACH_PASSWORD`, `COACH_SESSION_SECRET`
+- `WEBSITE_URL=https://hybridpro.in`, `APP_URL=https://app.hybridpro.in`, `PORT=3002`
+
+Without `SUPABASE_URL` / `SUPABASE_ANON_KEY`, Pine Labs can still charge, but the member app will show **Supabase is not configured** when unlocking after payment.

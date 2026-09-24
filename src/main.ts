@@ -19,6 +19,20 @@ async function bootstrap() {
     ],
     credentials: true,
   });
+
+  const googleIds =
+    process.env.GOOGLE_CLIENT_IDS?.trim() || process.env.GOOGLE_CLIENT_ID?.trim();
+  if (!googleIds) {
+    console.warn(
+      '[bootstrap] GOOGLE_CLIENT_IDS missing — POST /api/auth/google will fail',
+    );
+  }
+  if (!process.env.SMTP_HOST?.trim() || !process.env.SMTP_USER?.trim()) {
+    console.warn(
+      '[bootstrap] SMTP_* missing — email OTP codes will be logged to the console only',
+    );
+  }
+
   await app.listen(Number(process.env.PORT ?? 3002), '0.0.0.0');
 }
 

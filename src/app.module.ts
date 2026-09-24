@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AdminController } from './admin/admin.controller.js';
+import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
+import { MailService } from './auth/mail.service.js';
 import { CoachGuard } from './auth/coach.guard.js';
 import { InternalGuard } from './auth/internal.guard.js';
 import { MemberGuard } from './auth/member.guard.js';
@@ -50,6 +52,7 @@ import { WorkoutService } from './workout/workout.service.js';
     AdminController,
     ExercisesController,
     MeController,
+    AuthController,
   ],
   providers: [
     SubscriptionService,
@@ -58,6 +61,7 @@ import { WorkoutService } from './workout/workout.service.js';
     WorkoutService,
     ContactService,
     AuthService,
+    MailService,
     CloudinaryService,
     DeviceTokensService,
     FcmService,

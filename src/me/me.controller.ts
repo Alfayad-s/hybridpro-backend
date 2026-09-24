@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, HttpCode, Post, Put, Query, UseGuards, Inject } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Inject,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { CurrentMember } from '../auth/member.decorator.js';
@@ -20,6 +33,10 @@ type AssessmentBody = {
   result?: unknown;
   input?: unknown;
   experienceLevel?: string | null;
+};
+
+type UpdateMeBody = {
+  fullName?: string;
 };
 
 @Controller('me')
@@ -55,6 +72,7 @@ export class MeController {
   private async upsertProfile(
     member: MemberUser,
     extra?: {
+      fullName?: string | null;
       experienceLevel?: string | null;
       assessmentStatus?: string | null;
       assessmentJson?: string | null;
@@ -66,7 +84,10 @@ export class MeController {
       .where(eq(profiles.id, member.userId))
       .limit(1);
 
-    const fullName = member.fullName?.trim() || existing?.fullName || null;
+    const fullName =
+      extra && 'fullName' in extra
+        ? extra.fullName?.trim() || null
+        : member.fullName?.trim() || existing?.fullName || null;
     const avatarUrl = member.avatarUrl?.trim() || existing?.avatarUrl || null;
     const experienceLevel =
       extra && 'experienceLevel' in extra
@@ -139,6 +160,23 @@ export class MeController {
       avatarUrl: profile?.avatarUrl ?? member.avatarUrl ?? null,
       experienceLevel: profile?.experienceLevel ?? null,
       assessmentStatus: profile?.assessmentStatus ?? null,
+    };
+  }
+
+  @Patch()
+  async updateMe(@CurrentMember() member: MemberUser, @Body() body: UpdateMeBody) {
+    const fullName = body.fullName?.trim() ?? '';
+    if (fullName.length < 2) {
+      throw new BadRequestException('fullName must be at least 2 characters');
+    }
+    const row = await this.upsertProfile(member, { fullName });
+    return {
+      userId: member.userId,
+      email: member.email,
+      fullName: row?.fullName ?? fullName,
+      avatarUrl: row?.avatarUrl ?? member.avatarUrl ?? null,
+      experienceLevel: row?.experienceLevel ?? null,
+      assessmentStatus: row?.assessmentStatus ?? null,
     };
   }
 
@@ -307,5 +345,22 @@ export class MeController {
   @HttpCode(200)
   markChatRead(@CurrentMember() member: MemberUser) {
     return this.chat.markMemberRead(member);
+  }
+
+  @Get('water')
+  getWater(
+    @CurrentMember() member: MemberUser,
+    @Query('date') date?: string,
+  ) {
+    return this.workouts.getWater(member.userId, date);
+  }
+
+  @Post('water')
+  @HttpCode(200)
+  logWater(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { amountMl?: number; date?: string; id?: string },
+  ) {
+    return this.workouts.logWater(member.userId, body ?? {});
   }
 }

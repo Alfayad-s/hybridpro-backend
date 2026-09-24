@@ -10,6 +10,38 @@ export const profiles = pgTable('profiles', {
   updatedAt: timestamp('updated_at'),
 });
 
+/** Hybrid Pro member accounts created via Nest Google auth (not Supabase Auth). */
+export const memberAccounts = pgTable(
+  'member_accounts',
+  {
+    id: uuid('id').primaryKey().notNull(),
+    email: text('email').notNull(),
+    googleSub: text('google_sub'),
+    fullName: text('full_name'),
+    avatarUrl: text('avatar_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    // Case-insensitive uniqueness is enforced in SQL migration
+    // (lower(trim(email))); drizzle keeps a nominal unique on email.
+    uniqueIndex('member_accounts_email_lower_uidx').on(t.email),
+    uniqueIndex('member_accounts_google_sub_uidx').on(t.googleSub),
+  ],
+);
+
+/** Short-lived email OTP challenges for Nest member login. */
+export const emailOtps = pgTable('email_otps', {
+  email: text('email').primaryKey().notNull(),
+  codeHash: text('code_hash').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  sentAt: timestamp('sent_at').defaultNow().notNull(),
+});
+
 export const subscriptions = pgTable(
   'subscriptions',
   {

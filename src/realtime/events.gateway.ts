@@ -98,6 +98,19 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private async tryMember(token: string) {
+    try {
+      const payload = this.jwt.verify<{
+        role?: string;
+        sub?: string;
+        email?: string;
+      }>(token);
+      if (payload.role === 'member' && payload.sub) {
+        return { userId: payload.sub };
+      }
+    } catch {
+      /* not a Nest member JWT */
+    }
+
     const url = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
     const anon =
       process.env.SUPABASE_ANON_KEY?.trim() ||

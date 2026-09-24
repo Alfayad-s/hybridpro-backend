@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -23,6 +23,8 @@ type PlanExercise = {
   restSeconds: number;
   order: number;
   notes?: string;
+  imageUrl?: string;
+  videoUrl?: string;
 };
 
 type PlanDay = {
@@ -120,6 +122,10 @@ function emptyPayload(): SyncPayload {
       history: { data: [], updatedAt: EPOCH },
       activeWorkout: { data: null, updatedAt: EPOCH },
       progress: { data: { bodyWeightLog: [], goalWeight: null }, updatedAt: EPOCH },
+      meals: {
+        data: { entries: [], waterLogs: [] },
+        updatedAt: EPOCH,
+      },
       recovery: { data: { lastTrained: {} }, updatedAt: EPOCH },
       customExercises: { data: [], updatedAt: EPOCH },
       muscleGroups: { data: [], updatedAt: EPOCH },
@@ -161,6 +167,52 @@ export class WorkoutService {
     const merged = mergeSyncPayloads(existing, incoming);
     await this.writePayload(userId, merged);
     return merged;
+  }
+
+  /** Log a water intake entry into the member meals sync store. */
+  async logWater(
+    userId: string,
+    input: { amountMl?: number; date?: string; id?: string },
+  ) {
+    const amount = Math.round(Number(input.amountMl));
+    if (!Number.isFinite(amount) || amount < 1 || amount > 5000) {
+      throw new BadRequestException('amountMl must be between 1 and 5000');
+    }
+    const date = normalizeMealDate(input.date) ?? localDateKey();
+    const now = new Date().toISOString();
+    const entry = {
+      id: (input.id?.trim() || randomUUID()).slice(0, 64),
+      date,
+      amountMl: amount,
+      createdAt: now,
+    };
+
+    const payload = await this.readPayload(userId);
+    const meals = readMealsData(payload);
+    const waterLogs = [
+      entry,
+      ...meals.waterLogs.filter((w) => w.id !== entry.id),
+    ].slice(0, 2000);
+
+    payload.stores.meals = {
+      data: { entries: meals.entries, waterLogs },
+      updatedAt: now,
+    };
+    await this.writePayload(userId, payload);
+
+    const dayLogs = waterLogs.filter((w) => w.date === date);
+    const totalMl = dayLogs.reduce((sum, w) => sum + w.amountMl, 0);
+    return { entry, date, totalMl, logs: dayLogs };
+  }
+
+  /** Today's (or dated) water log summary. */
+  async getWater(userId: string, date?: string) {
+    const day = normalizeMealDate(date) ?? localDateKey();
+    const payload = await this.readPayload(userId);
+    const meals = readMealsData(payload);
+    const logs = meals.waterLogs.filter((w) => w.date === day);
+    const totalMl = logs.reduce((sum, w) => sum + w.amountMl, 0);
+    return { date: day, totalMl, logs };
   }
 
   async listAssigned(subscriptionId: string) {
@@ -413,6 +465,8 @@ export class WorkoutService {
           restSeconds: clampInt(row.restSeconds, 0, 600, 90),
           order,
           notes: row.notes?.trim() || undefined,
+          imageUrl: catalog.imageUrl || undefined,
+          videoUrl: catalog.videoUrl || undefined,
         };
         return planExercise;
       })
@@ -568,8 +622,93 @@ function mergeSyncPayloads(existing: SyncPayload, incoming: SyncPayload): SyncPa
       };
       continue;
     }
+    if (key === 'meals') {
+      stores.meals = mergeMealsSlices(left, right);
+      continue;
+    }
     stores[key] = sliceTime(right) > sliceTime(left) ? right : left;
   }
 
   return { version: 1, stores };
+}
+
+type WaterLogRow = {
+  id: string;
+  date: string;
+  amountMl: number;
+  createdAt?: string;
+};
+
+type MealEntryRow = Record<string, unknown> & { id?: string };
+
+type MealsData = {
+  entries: MealEntryRow[];
+  waterLogs: WaterLogRow[];
+};
+
+function localDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function normalizeMealDate(raw?: string) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return localDateKey(parsed);
+}
+
+function readMealsData(payload: SyncPayload): MealsData {
+  const raw = payload.stores?.meals?.data;
+  const data =
+    raw && typeof raw === 'object' ? (raw as { entries?: unknown; waterLogs?: unknown }) : {};
+  const entries = Array.isArray(data.entries)
+    ? (data.entries as MealEntryRow[]).filter((e) => e && typeof e === 'object')
+    : [];
+  const waterLogs = Array.isArray(data.waterLogs)
+    ? (data.waterLogs as WaterLogRow[])
+        .filter((w) => w && typeof w === 'object' && typeof w.id === 'string')
+        .map((w) => ({
+          id: String(w.id),
+          date: String(w.date ?? ''),
+          amountMl: Math.max(0, Math.round(Number(w.amountMl) || 0)),
+          createdAt: w.createdAt ? String(w.createdAt) : undefined,
+        }))
+        .filter((w) => w.date && w.amountMl > 0)
+    : [];
+  return { entries, waterLogs };
+}
+
+function mergeMealsSlices(
+  left: { data: unknown; updatedAt: string },
+  right: { data: unknown; updatedAt: string },
+) {
+  const a = readMealsData({ version: 1, stores: { plans: { data: [], updatedAt: EPOCH }, meals: left } });
+  const b = readMealsData({ version: 1, stores: { plans: { data: [], updatedAt: EPOCH }, meals: right } });
+
+  const entryMap = new Map<string, MealEntryRow>();
+  for (const e of [...a.entries, ...b.entries]) {
+    const id = e.id != null ? String(e.id) : '';
+    if (!id) continue;
+    entryMap.set(id, e);
+  }
+  const waterMap = new Map<string, WaterLogRow>();
+  for (const w of [...a.waterLogs, ...b.waterLogs]) {
+    waterMap.set(w.id, w);
+  }
+
+  const newer = sliceTime(right) >= sliceTime(left) ? right.updatedAt : left.updatedAt;
+  return {
+    data: {
+      entries: [...entryMap.values()].slice(0, 2000),
+      waterLogs: [...waterMap.values()]
+        .sort((x, y) => String(y.createdAt ?? '').localeCompare(String(x.createdAt ?? '')))
+        .slice(0, 2000),
+    },
+    updatedAt: newer,
+  };
 }

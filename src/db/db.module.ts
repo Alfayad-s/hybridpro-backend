@@ -51,6 +51,32 @@ export const DB = Symbol('DB');
         await client`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS assessment_status text`;
         await client`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS assessment_json text`;
         await client`
+          CREATE TABLE IF NOT EXISTS member_accounts (
+            id uuid PRIMARY KEY NOT NULL,
+            email text NOT NULL,
+            google_sub text,
+            full_name text,
+            avatar_url text,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        // Email is the shared identity for Google + OTP — case-insensitive unique.
+        await client`DROP INDEX IF EXISTS member_accounts_email_uidx`;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_email_lower_uidx ON member_accounts (lower(trim(email)))`;
+        await client`DROP INDEX IF EXISTS member_accounts_google_sub_uidx`;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_google_sub_uidx ON member_accounts (google_sub) WHERE google_sub IS NOT NULL`;
+        await client`UPDATE member_accounts SET email = lower(trim(email)) WHERE email <> lower(trim(email))`;
+        await client`
+          CREATE TABLE IF NOT EXISTS email_otps (
+            email text PRIMARY KEY NOT NULL,
+            code_hash text NOT NULL,
+            expires_at timestamp NOT NULL,
+            attempts integer DEFAULT 0 NOT NULL,
+            sent_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
           CREATE TABLE IF NOT EXISTS coach_notes (
             subscription_id uuid PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
             body text NOT NULL DEFAULT '',
