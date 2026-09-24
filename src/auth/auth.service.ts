@@ -120,6 +120,9 @@ export class AuthService {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + AuthService.otpTtlMs);
 
+    // Send first — only persist + rate-limit after the email actually goes out.
+    await this.mail.sendOtpEmail({ to: email, code });
+
     await this.db
       .insert(emailOtps)
       .values({
@@ -139,7 +142,6 @@ export class AuthService {
         },
       });
 
-    await this.mail.sendOtpEmail({ to: email, code });
     return { ok: true as const, email };
   }
 

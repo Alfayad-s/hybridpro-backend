@@ -1,4 +1,5 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import dns from 'node:dns';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
@@ -11,14 +12,16 @@ export class MailService {
   private getTransporter() {
     if (this.transporter) return this.transporter;
 
-    const host = process.env.SMTP_HOST?.trim();
+    const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
     const port = Number(process.env.SMTP_PORT || 587);
     // Gmail app passwords are often pasted with spaces — strip them.
     const user = process.env.SMTP_USER?.trim();
     const pass = process.env.SMTP_PASS?.replace(/\s+/g, '').trim();
 
-    if (!host || !user || !pass) return null;
+    if (!user || !pass) return null;
 
+    // Prefer STARTTLS on 587. Avoid service:'gmail' — it forces 465 and can
+    // pick IPv6, which Railway cannot reach (ENETUNREACH …::465).
     const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
     this.transporter = nodemailer.createTransport({
@@ -34,8 +37,20 @@ export class MailService {
         minVersion: 'TLSv1.2',
         servername: host,
       },
+      // Railway has no IPv6 — never dial AAAA records.
       family: 4,
-    } as Parameters<typeof nodemailer.createTransport>[0]);
+      lookup(
+        hostname: string,
+        _options: unknown,
+        callback: (
+          err: NodeJS.ErrnoException | null,
+          address: string,
+          family: number,
+        ) => void,
+      ) {
+        dns.lookup(hostname, { family: 4 }, callback);
+      },
+    } as unknown as Parameters<typeof nodemailer.createTransport>[0]);
     return this.transporter;
   }
 
@@ -78,6 +93,15 @@ export class MailService {
 
     const transporter = this.getTransporter();
     if (!transporter) {
+      const missing = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS']
+        .filter((key) => !process.env[key]?.trim())
+        .join(', ');
+      this.logger.error(`SMTP not configured (missing ${missing || 'values'})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException(
+          'Email is not configured on the server. Set SMTP_HOST, SMTP_USER, SMTP_PASS.',
+        );
+      }
       this.logger.warn(
         `[dev] SMTP not configured — OTP for ${input.to}: ${input.code}`,
       );
@@ -102,11 +126,22 @@ export class MailService {
       this.transporter = null;
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`SMTP send failed: ${message}`);
-      throw new ServiceUnavailableException(
-        message.toLowerCase().includes('timed out')
-          ? 'Email is taking too long. Please try again in a moment.'
-          : 'Could not send email code. Please try again.',
-      );
+      const lower = message.toLowerCase();
+      let clientMessage = 'Could not send email code. Please try again.';
+      if (lower.includes('timed out') || lower.includes('timeout')) {
+        clientMessage = 'Email is taking too long. Please try again in a moment.';
+      } else if (
+        lower.includes('invalid login') ||
+        lower.includes('username and password') ||
+        lower.includes('authentication') ||
+        lower.includes('eauth')
+      ) {
+        clientMessage =
+          'Email server login failed. Check SMTP_USER / SMTP_PASS on the API.';
+      } else if (lower.includes('enotfound') || lower.includes('econnrefused')) {
+        clientMessage = 'Cannot reach the email server. Check SMTP_HOST.';
+      }
+      throw new ServiceUnavailableException(clientMessage);
     }
   }
 
@@ -132,90 +167,109 @@ export class MailService {
     website: string;
     support: string;
   }) {
-    const digits = input.code
-      .split('')
-      .map(
-        (d) => `
-          <td align="center" style="padding:0 4px;">
-            <div style="width:42px;height:52px;line-height:52px;border-radius:10px;background:#111111;border:1px solid #2A2A2A;color:#A0D028;font-size:24px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0;">
-              ${d}
-            </div>
-          </td>`,
-      )
-      .join('');
+    const code = this.escapeHtml(input.code);
+    const email = this.escapeHtml(input.email);
+    const website = this.escapeHtml(input.website);
+    const support = this.escapeHtml(input.support);
+    // Email clients cannot run clipboard JS — a mailto:/app link with the
+    // code as visible text is the most reliable “copy-friendly” control.
+    const appUrl = process.env.APP_URL?.trim() || 'https://app.hybridpro.in';
+    const copyHref = this.escapeHtml(
+      `${appUrl.replace(/\/$/, '')}/login?otp=${encodeURIComponent(input.code)}`,
+    );
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="light dark" />
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light" />
   <title>Hybrid Pro verification code</title>
 </head>
-<body style="margin:0;padding:0;background:#0B0B0F;-webkit-font-smoothing:antialiased;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0B0B0F;padding:32px 16px;">
+<body style="margin:0;padding:0;background:#F4F5F7;-webkit-font-smoothing:antialiased;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4F5F7;padding:40px 16px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#121214;border:1px solid #242428;border-radius:16px;overflow:hidden;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#FFFFFF;border:1px solid #E6E8EC;border-radius:16px;overflow:hidden;">
+          <!-- Header -->
           <tr>
-            <td style="padding:28px 28px 20px;border-bottom:1px solid #242428;">
+            <td style="padding:28px 32px 20px;border-bottom:1px solid #EEF0F3;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:18px;font-weight:800;letter-spacing:-0.3px;color:#FFFFFF;">
-                    Hybrid <span style="color:#A0D028;">Pro</span>
+                  <td style="font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:20px;font-weight:800;letter-spacing:-0.4px;color:#111111;">
+                    Hybrid <span style="color:#7CB518;">Pro</span>
                   </td>
-                  <td align="right" style="font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:#8A8A93;">
-                    Sign in
+                  <td align="right" style="font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.4px;text-transform:uppercase;color:#8B919A;">
+                    Verification
                   </td>
                 </tr>
               </table>
             </td>
           </tr>
 
+          <!-- Body -->
           <tr>
-            <td style="padding:32px 28px 8px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
-              <p style="margin:0 0 8px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.4px;color:#FFFFFF;">
-                Your verification code
+            <td style="padding:36px 32px 8px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
+              <p style="margin:0 0 10px;font-size:24px;line-height:1.25;font-weight:700;letter-spacing:-0.5px;color:#111111;">
+                Your sign-in code
               </p>
-              <p style="margin:0 0 28px;font-size:15px;line-height:1.55;color:#A1A1AA;">
-                Use this code to continue into Hybrid Pro. It expires in
-                <strong style="color:#E4E4E7;font-weight:600;">10 minutes</strong>
-                and can only be used once.
+              <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:#5C6370;">
+                Enter this code in the Hybrid Pro app to finish signing in.
+                It expires in <strong style="color:#111111;font-weight:600;">10 minutes</strong>.
               </p>
 
+              <!-- Single OTP box — works in Gmail / Outlook / Apple Mail -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+                <tr>
+                  <td align="center" style="background:#F7F8FA;border:1px solid #E6E8EC;border-radius:12px;padding:22px 16px;">
+                    <p style="margin:0 0 6px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#8B919A;">
+                      One-time code
+                    </p>
+                    <p style="margin:0;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:36px;line-height:1.2;font-weight:700;letter-spacing:10px;color:#111111;">
+                      ${code}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Copy-friendly button (opens app; code is also in the label) -->
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 28px;">
                 <tr>
-                  ${digits}
-                </tr>
-              </table>
-
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1A1A1E;border:1px solid #2A2A2E;border-radius:12px;">
-                <tr>
-                  <td style="padding:16px 18px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.5;color:#A1A1AA;">
-                    Sent to <span style="color:#E4E4E7;">${this.escapeHtml(input.email)}</span>.
-                    Enter the code in the app — never share it with anyone.
+                  <td align="center" bgcolor="#A0D028" style="border-radius:10px;background:#A0D028;">
+                    <a href="${copyHref}" style="display:inline-block;padding:14px 28px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#111111;text-decoration:none;border-radius:10px;">
+                      Copy code&nbsp;&nbsp;${code}
+                    </a>
                   </td>
                 </tr>
               </table>
+
+              <p style="margin:0 0 8px;font-size:13px;line-height:1.55;color:#8B919A;text-align:center;">
+                Tip: long-press the code above to copy it, or tap the button.
+              </p>
+              <p style="margin:0 0 24px;font-size:13px;line-height:1.55;color:#8B919A;text-align:center;">
+                Sent to <span style="color:#3A3F47;">${email}</span>
+              </p>
             </td>
           </tr>
 
+          <!-- Footer -->
           <tr>
-            <td style="padding:24px 28px 28px;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
-              <p style="margin:0 0 18px;font-size:13px;line-height:1.55;color:#71717A;">
+            <td style="padding:20px 32px 28px;border-top:1px solid #EEF0F3;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
+              <p style="margin:0 0 14px;font-size:13px;line-height:1.55;color:#8B919A;">
                 If you didn’t request this email, you can ignore it. Your account stays secure.
               </p>
-              <p style="margin:0;font-size:12px;line-height:1.5;color:#52525B;">
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#A0A6B0;">
                 Need help?
-                <a href="mailto:${this.escapeHtml(input.support)}" style="color:#A0D028;text-decoration:none;">${this.escapeHtml(input.support)}</a>
+                <a href="mailto:${support}" style="color:#5A8A12;text-decoration:none;">${support}</a>
                 ·
-                <a href="${this.escapeHtml(input.website)}" style="color:#A0D028;text-decoration:none;">hybridpro.in</a>
+                <a href="${website}" style="color:#5A8A12;text-decoration:none;">hybridpro.in</a>
               </p>
             </td>
           </tr>
         </table>
 
-        <p style="margin:20px 0 0;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#3F3F46;text-align:center;">
+        <p style="margin:20px 0 0;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#A0A6B0;text-align:center;">
           © ${new Date().getFullYear()} Hybrid Pro · Train. Track. Transform.
         </p>
       </td>

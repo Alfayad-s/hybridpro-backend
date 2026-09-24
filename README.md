@@ -47,6 +47,14 @@ COACH_PASSWORD=your-coach-password
 COACH_SESSION_SECRET=your-session-secret
 WEBSITE_URL=https://hybridpro.in
 APP_URL=https://app.hybridpro.in
+# Required for email OTP (Gmail app password — no spaces)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=support.hybridpro@gmail.com
+SMTP_PASS=your16charapppassword
+SMTP_FROM=Hybrid Pro <support.hybridpro@gmail.com>
+GOOGLE_CLIENT_IDS=web-client-id,ios-client-id,android-client-id
 ```
 
 5. Deploy, then open `https://your-service.onrender.com/api/health`.
