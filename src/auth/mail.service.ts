@@ -6,23 +6,36 @@ import type { Transporter } from 'nodemailer';
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
+  private static readonly sendTimeoutMs = 12_000;
 
   private getTransporter() {
     if (this.transporter) return this.transporter;
 
     const host = process.env.SMTP_HOST?.trim();
     const port = Number(process.env.SMTP_PORT || 587);
+    // Gmail app passwords are often pasted with spaces — strip them.
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASS?.trim();
+    const pass = process.env.SMTP_PASS?.replace(/\s+/g, '').trim();
 
     if (!host || !user || !pass) return null;
+
+    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
     this.transporter = nodemailer.createTransport({
       host,
       port,
-      secure: process.env.SMTP_SECURE === 'true' || port === 465,
+      secure,
+      requireTLS: !secure && port === 587,
       auth: { user, pass },
-    });
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 12_000,
+      tls: {
+        minVersion: 'TLSv1.2',
+        servername: host,
+      },
+      family: 4,
+    } as Parameters<typeof nodemailer.createTransport>[0]);
     return this.transporter;
   }
 
@@ -33,8 +46,7 @@ export class MailService {
       process.env.SMTP_USER?.trim() ||
       'Hybrid Pro <noreply@hybridpro.in>';
 
-    const website =
-      process.env.WEBSITE_URL?.trim() || 'https://hybridpro.in';
+    const website = process.env.WEBSITE_URL?.trim() || 'https://hybridpro.in';
     const support =
       process.env.SUPPORT_EMAIL?.trim() ||
       process.env.SMTP_USER?.trim() ||
@@ -73,20 +85,45 @@ export class MailService {
     }
 
     try {
-      await transporter.sendMail({
-        from,
-        to: input.to,
-        subject,
-        html,
-        text,
-      });
+      await this.withTimeout(
+        transporter.sendMail({
+          from,
+          to: input.to,
+          subject,
+          html,
+          text,
+        }),
+        MailService.sendTimeoutMs,
+        'Email send timed out. Check SMTP settings.',
+      );
       return { ok: true as const, delivered: true as const };
     } catch (error) {
-      this.logger.error(
-        `SMTP send failed: ${error instanceof Error ? error.message : error}`,
+      // Drop cached transporter so the next attempt can reconnect cleanly.
+      this.transporter = null;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SMTP send failed: ${message}`);
+      throw new ServiceUnavailableException(
+        message.toLowerCase().includes('timed out')
+          ? 'Email is taking too long. Please try again in a moment.'
+          : 'Could not send email code. Please try again.',
       );
-      throw new ServiceUnavailableException('Could not send email code');
     }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   private buildOtpHtml(input: {
