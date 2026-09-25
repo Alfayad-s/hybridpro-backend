@@ -1,84 +1,34 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import dns from 'node:dns/promises';
-import net from 'node:net';
-import nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
 
+/** OTP + transactional email via Resend HTTPS (no SMTP). */
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: Transporter | null = null;
-  private static readonly sendTimeoutMs = 12_000;
-
-  /**
-   * Nodemailer 10 resolves A+AAAA and can dial IPv6 first. Railway (and many
-   * containers) advertise IPv6 interfaces but have no outbound IPv6 route →
-   * ENETUNREACH …::587. `family` / `lookup` options are ignored by that
-   * resolver, so we pin the socket to a resolved IPv4 literal and keep the
-   * real hostname only for TLS SNI / cert checks.
-   */
-  private async getTransporter(): Promise<Transporter | null> {
-    if (this.transporter) return this.transporter;
-
-    const hostname = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
-    const port = Number(process.env.SMTP_PORT || 587);
-    // Gmail app passwords are often pasted with spaces — strip them.
-    const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASS?.replace(/\s+/g, '').trim();
-
-    if (!user || !pass) return null;
-
-    let host = hostname;
-    if (!net.isIP(hostname)) {
-      try {
-        const resolved = await dns.lookup(hostname, { family: 4 });
-        host = resolved.address;
-        this.logger.log(`SMTP ${hostname} → ${host} (IPv4 only)`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`SMTP IPv4 lookup failed for ${hostname}: ${message}`);
-        throw new ServiceUnavailableException(
-          'Cannot resolve email server (IPv4). Check SMTP_HOST.',
-        );
-      }
-    }
-
-    // Prefer STARTTLS on 587. Avoid service:'gmail' — it forces 465.
-    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
-
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      requireTLS: !secure && port === 587,
-      auth: { user, pass },
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 12_000,
-      tls: {
-        minVersion: 'TLSv1.2',
-        // Must be the hostname, not the IP — SNI + cert verification.
-        servername: hostname,
-      },
-      // EHLO / greeting identity
-      name: hostname,
-    });
-    return this.transporter;
-  }
+  private static readonly sendTimeoutMs = 15_000;
 
   async sendOtpEmail(input: { to: string; code: string }) {
+    const apiKey = process.env.RESEND_API_KEY?.trim();
     const from =
       process.env.RESEND_FROM?.trim() ||
-      process.env.SMTP_FROM?.trim() ||
       process.env.EMAIL_FROM?.trim() ||
-      process.env.SMTP_USER?.trim() ||
       'Hybrid Pro <noreply@hybridpro.in>';
 
     const website = process.env.WEBSITE_URL?.trim() || 'https://hybridpro.in';
     const support =
-      process.env.SUPPORT_EMAIL?.trim() ||
-      process.env.SMTP_USER?.trim() ||
-      'support.hybridpro@gmail.com';
+      process.env.SUPPORT_EMAIL?.trim() || 'support.hybridpro@gmail.com';
+
+    if (!apiKey) {
+      this.logger.error('RESEND_API_KEY is not set — cannot send OTP email');
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException(
+          'Email is not configured. Set RESEND_API_KEY on the API.',
+        );
+      }
+      this.logger.warn(
+        `[dev] RESEND_API_KEY missing — OTP for ${input.to}: ${input.code}`,
+      );
+      return { ok: true as const, delivered: false as const };
+    }
 
     const subject = `${input.code} is your Hybrid Pro verification code`;
     const html = this.buildOtpHtml({
@@ -104,98 +54,20 @@ export class MailService {
       website,
     ].join('\n');
 
-    // Railway Free/Hobby blocks outbound SMTP (587/465) — use Resend HTTPS there.
-    const resendKey = process.env.RESEND_API_KEY?.trim();
-    if (resendKey) {
-      return this.sendViaResend({
-        apiKey: resendKey,
-        from,
-        to: input.to,
-        subject,
-        html,
-        text,
-      });
-    }
-
-    const transporter = await this.getTransporter();
-    if (!transporter) {
-      this.logger.error(
-        'Email not configured (set RESEND_API_KEY for Railway, or SMTP_* for hosts that allow SMTP)',
-      );
-      if (process.env.NODE_ENV === 'production') {
-        throw new ServiceUnavailableException(
-          'Email is not configured. On Railway set RESEND_API_KEY (SMTP ports are blocked).',
-        );
-      }
-      this.logger.warn(
-        `[dev] email not configured — OTP for ${input.to}: ${input.code}`,
-      );
-      return { ok: true as const, delivered: false as const };
-    }
-
-    try {
-      await this.withTimeout(
-        transporter.sendMail({
-          from,
-          to: input.to,
-          subject,
-          html,
-          text,
-        }),
-        MailService.sendTimeoutMs,
-        'Email send timed out. Check SMTP settings.',
-      );
-      return { ok: true as const, delivered: true as const };
-    } catch (error) {
-      // Drop cached transporter so the next attempt can reconnect cleanly.
-      this.transporter = null;
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`SMTP send failed: ${message}`);
-      const lower = message.toLowerCase();
-      let clientMessage = 'Could not send email code. Please try again.';
-      if (lower.includes('timed out') || lower.includes('timeout')) {
-        this.logger.error(
-          'SMTP timeout usually means the host blocks outbound mail ports (Railway Free/Hobby). Set RESEND_API_KEY and use HTTPS instead.',
-        );
-        clientMessage =
-          'Email server unreachable from this host. Use RESEND_API_KEY on Railway, or deploy where SMTP is allowed.';
-      } else if (
-        lower.includes('invalid login') ||
-        lower.includes('username and password') ||
-        lower.includes('authentication') ||
-        lower.includes('eauth')
-      ) {
-        clientMessage =
-          'Email server login failed. Check SMTP_USER / SMTP_PASS on the API.';
-      } else if (lower.includes('enotfound') || lower.includes('econnrefused')) {
-        clientMessage = 'Cannot reach the email server. Check SMTP_HOST.';
-      }
-      throw new ServiceUnavailableException(clientMessage);
-    }
-  }
-
-  private async sendViaResend(input: {
-    apiKey: string;
-    from: string;
-    to: string;
-    subject: string;
-    html: string;
-    text: string;
-  }) {
     try {
       const response = await this.withTimeout(
         fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${input.apiKey}`,
+            Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: input.from,
+            from,
             to: [input.to],
-            subject: input.subject,
-            html: input.html,
-            text: input.text,
+            subject,
+            html,
+            text,
           }),
         }),
         MailService.sendTimeoutMs,
@@ -208,7 +80,9 @@ export class MailService {
         throw new ServiceUnavailableException(
           response.status === 401 || response.status === 403
             ? 'Resend API key rejected. Check RESEND_API_KEY.'
-            : 'Could not send email code. Please try again.',
+            : response.status === 422
+              ? 'Resend rejected the from-address. Use a verified domain in RESEND_FROM.'
+              : 'Could not send email code. Please try again.',
         );
       }
 

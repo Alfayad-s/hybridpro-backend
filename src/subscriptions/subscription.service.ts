@@ -507,10 +507,27 @@ export class SubscriptionService {
       return { ok: false as const, reason: 'failed' as const, email: null, subscription: null };
     }
 
-    const row = await this.findCheckoutRow({
+    let row = await this.findCheckoutRow({
       pineOrderId: input.pineOrderId,
       merchantOrderReference: input.merchantOrderReference,
     });
+
+    // App may not still have order ids after a restart — use latest pending
+    // checkout for this member so paid users can unlock.
+    if (!row) {
+      const latest = await this.findLatestForIdentity({
+        email: input.email,
+        userId: input.userId,
+      });
+      if (
+        latest &&
+        (latest.status === 'pending' ||
+          Boolean(latest.pineOrderId) ||
+          Boolean(latest.merchantOrderReference))
+      ) {
+        row = latest;
+      }
+    }
 
     const pineOrderId = (input.pineOrderId || row?.pineOrderId || '').trim();
     const merchantOrderReference =

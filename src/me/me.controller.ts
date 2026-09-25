@@ -188,6 +188,36 @@ export class MeController {
     });
   }
 
+  /** Unlock after Pine Labs return — uses checkout intent + member identity. */
+  @Post('subscription/confirm')
+  @HttpCode(200)
+  async confirmSubscription(
+    @CurrentMember() member: MemberUser,
+    @Body()
+    body: {
+      pineOrderId?: string;
+      orderId?: string;
+      merchantOrderReference?: string;
+      planId?: string;
+    },
+  ) {
+    if (!member.email) {
+      throw new BadRequestException('email_required');
+    }
+    const result = await this.subscriptions.confirmPaymentReturn({
+      pineOrderId: body.pineOrderId || body.orderId,
+      merchantOrderReference: body.merchantOrderReference,
+      planId: body.planId,
+      email: member.email,
+      userId: member.userId,
+    });
+    const plan = await this.subscriptions.getPlanForIdentity({
+      email: member.email,
+      userId: member.userId,
+    });
+    return { ...result, ...plan };
+  }
+
   @Get('assessment')
   async getAssessment(@CurrentMember() member: MemberUser) {
     try {

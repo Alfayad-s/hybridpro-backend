@@ -27,9 +27,14 @@ async function bootstrap() {
       '[bootstrap] GOOGLE_CLIENT_IDS missing — POST /api/auth/google will fail',
     );
   }
-  if (!process.env.SMTP_HOST?.trim() || !process.env.SMTP_USER?.trim()) {
+  if (!process.env.RESEND_API_KEY?.trim()) {
     console.warn(
-      '[bootstrap] SMTP_* missing — email OTP codes will be logged to the console only',
+      '[bootstrap] RESEND_API_KEY missing — email OTP will fail in production (dev logs the code)',
+    );
+  }
+  if (!process.env.RESEND_FROM?.trim()) {
+    console.warn(
+      '[bootstrap] RESEND_FROM missing — defaulting to Hybrid Pro <noreply@hybridpro.in>',
     );
   }
 
