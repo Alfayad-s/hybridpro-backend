@@ -15,7 +15,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
-    "lint": "oxlint src/ test/"
+    "lint": "oxlint src/ test/",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/engagement/*.test.js"
   },
   "engines": {
     "node": ">=20"

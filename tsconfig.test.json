@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist-test",
+    "declaration": false,
+    "sourceMap": false,
+    "incremental": false
+  },
+  "include": ["src/engagement/**/*.ts", "test/engagement/**/*.ts"]
+}

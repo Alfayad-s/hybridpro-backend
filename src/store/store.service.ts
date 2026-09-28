@@ -1,0 +1,799 @@
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, asc, count, desc, eq, ilike, isNull, or } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { DB } from '../db/db.module.js';
+import {
+  coinRedemptions,
+  storeCategories,
+  storeKinds,
+  storeProducts,
+} from '../db/schema.js';
+import { WalletService } from '../rewards/wallet.service.js';
+import { STORE_SEED_PRODUCTS } from './store-seed.js';
+
+type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
+
+/** Plans first, then merch categories. */
+const CATEGORY_SEED = [
+  { slug: 'plans', label: 'Plans', sortOrder: 0 },
+  { slug: 'tees', label: 'Tees', sortOrder: 10 },
+  { slug: 'shorts', label: 'Shorts', sortOrder: 20 },
+  { slug: 'ebooks', label: 'E-Books', sortOrder: 30 },
+] as const;
+
+/** Plan kind first. */
+const KIND_SEED = [
+  { slug: 'plan', label: 'Plan', sortOrder: 0 },
+  { slug: 'merch', label: 'Merch', sortOrder: 10 },
+] as const;
+
+export type StoreTaxonomyDto = {
+  id: string;
+  slug: string;
+  label: string;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StoreTaxonomyInput = {
+  slug?: string;
+  label?: string;
+  sortOrder?: number;
+  active?: boolean;
+};
+
+export type StoreProductDto = {
+  id: string;
+  slug: string;
+  title: string;
+  subtitle: string;
+  description: string | null;
+  category: string;
+  kind: string;
+  priceLabel: string;
+  pricePaise: number | null;
+  coinPrice: number | null;
+  imageUrl: string | null;
+  sizes: string[];
+  planId: string | null;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StoreProductInput = {
+  title?: string;
+  slug?: string;
+  subtitle?: string;
+  description?: string | null;
+  category?: string;
+  kind?: string;
+  priceLabel?: string;
+  pricePaise?: number | null;
+  coinPrice?: number | null;
+  imageUrl?: string | null;
+  sizes?: string[] | string;
+  planId?: string | null;
+  active?: boolean;
+  sortOrder?: number;
+};
+
+@Injectable()
+export class StoreService {
+  private seeding: Promise<void> | null = null;
+
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly wallet: WalletService,
+  ) {}
+
+  // ─── Categories ─────────────────────────────────────────────
+
+  async listCategories(opts?: { activeOnly?: boolean }) {
+    await this.ensureSeeded();
+    const rows = opts?.activeOnly
+      ? await this.db
+          .select()
+          .from(storeCategories)
+          .where(eq(storeCategories.active, true))
+          .orderBy(asc(storeCategories.sortOrder), asc(storeCategories.label))
+      : await this.db
+          .select()
+          .from(storeCategories)
+          .orderBy(asc(storeCategories.sortOrder), asc(storeCategories.label));
+    return { categories: rows.map((r) => this.toTaxonomyDto(r)) };
+  }
+
+  async createCategory(input: StoreTaxonomyInput) {
+    await this.ensureSeeded();
+    const payload = this.toTaxonomyRow(input, true);
+    const [clash] = await this.db
+      .select({ id: storeCategories.id })
+      .from(storeCategories)
+      .where(eq(storeCategories.slug, payload.slug))
+      .limit(1);
+    if (clash) throw new BadRequestException(`Category “${payload.slug}” exists`);
+    const [row] = await this.db.insert(storeCategories).values(payload).returning();
+    return { category: this.toTaxonomyDto(row!) };
+  }
+
+  async updateCategory(id: string, input: StoreTaxonomyInput) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(storeCategories)
+      .where(eq(storeCategories.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Category not found');
+    const payload = this.toTaxonomyRow(input, false, current);
+    if (payload.slug !== current.slug) {
+      const [clash] = await this.db
+        .select({ id: storeCategories.id })
+        .from(storeCategories)
+        .where(eq(storeCategories.slug, payload.slug))
+        .limit(1);
+      if (clash) throw new BadRequestException(`Category “${payload.slug}” exists`);
+      await this.db
+        .update(storeProducts)
+        .set({ category: payload.slug, updatedAt: new Date() })
+        .where(eq(storeProducts.category, current.slug));
+    }
+    const [row] = await this.db
+      .update(storeCategories)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(storeCategories.id, id))
+      .returning();
+    return { category: this.toTaxonomyDto(row!) };
+  }
+
+  async removeCategory(id: string) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(storeCategories)
+      .where(eq(storeCategories.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Category not found');
+    if (current.slug === 'plans') {
+      throw new BadRequestException('Cannot delete system category “plans”');
+    }
+    const [used] = await this.db
+      .select({ n: count() })
+      .from(storeProducts)
+      .where(eq(storeProducts.category, current.slug));
+    if ((used?.n ?? 0) > 0) {
+      throw new BadRequestException(
+        `Cannot delete “${current.label}” — ${used!.n} product(s) still use it`,
+      );
+    }
+    await this.db.delete(storeCategories).where(eq(storeCategories.id, id));
+    return { ok: true as const };
+  }
+
+  // ─── Kinds ──────────────────────────────────────────────────
+
+  async listKinds(opts?: { activeOnly?: boolean }) {
+    await this.ensureSeeded();
+    const rows = opts?.activeOnly
+      ? await this.db
+          .select()
+          .from(storeKinds)
+          .where(eq(storeKinds.active, true))
+          .orderBy(asc(storeKinds.sortOrder), asc(storeKinds.label))
+      : await this.db
+          .select()
+          .from(storeKinds)
+          .orderBy(asc(storeKinds.sortOrder), asc(storeKinds.label));
+    return { kinds: rows.map((r) => this.toTaxonomyDto(r)) };
+  }
+
+  async createKind(input: StoreTaxonomyInput) {
+    await this.ensureSeeded();
+    const payload = this.toTaxonomyRow(input, true);
+    const [clash] = await this.db
+      .select({ id: storeKinds.id })
+      .from(storeKinds)
+      .where(eq(storeKinds.slug, payload.slug))
+      .limit(1);
+    if (clash) throw new BadRequestException(`Kind “${payload.slug}” exists`);
+    const [row] = await this.db.insert(storeKinds).values(payload).returning();
+    return { kind: this.toTaxonomyDto(row!) };
+  }
+
+  async updateKind(id: string, input: StoreTaxonomyInput) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(storeKinds)
+      .where(eq(storeKinds.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Kind not found');
+    const payload = this.toTaxonomyRow(input, false, current);
+    if (payload.slug !== current.slug) {
+      const [clash] = await this.db
+        .select({ id: storeKinds.id })
+        .from(storeKinds)
+        .where(eq(storeKinds.slug, payload.slug))
+        .limit(1);
+      if (clash) throw new BadRequestException(`Kind “${payload.slug}” exists`);
+      await this.db
+        .update(storeProducts)
+        .set({ kind: payload.slug, updatedAt: new Date() })
+        .where(eq(storeProducts.kind, current.slug));
+    }
+    const [row] = await this.db
+      .update(storeKinds)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(storeKinds.id, id))
+      .returning();
+    return { kind: this.toTaxonomyDto(row!) };
+  }
+
+  async removeKind(id: string) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(storeKinds)
+      .where(eq(storeKinds.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Kind not found');
+    if (current.slug === 'plan' || current.slug === 'merch') {
+      throw new BadRequestException(
+        `Cannot delete system kind “${current.slug}”`,
+      );
+    }
+    const [used] = await this.db
+      .select({ n: count() })
+      .from(storeProducts)
+      .where(eq(storeProducts.kind, current.slug));
+    if ((used?.n ?? 0) > 0) {
+      throw new BadRequestException(
+        `Cannot delete “${current.label}” — ${used!.n} product(s) still use it`,
+      );
+    }
+    await this.db.delete(storeKinds).where(eq(storeKinds.id, id));
+    return { ok: true as const };
+  }
+
+  // ─── Products ───────────────────────────────────────────────
+
+  async listAdmin(q?: string, category?: string) {
+    await this.ensureSeeded();
+    const query = q?.trim();
+    const cat = category?.trim().toLowerCase();
+    const filters = [];
+    if (query) {
+      filters.push(
+        or(
+          ilike(storeProducts.title, `%${query}%`),
+          ilike(storeProducts.slug, `%${query}%`),
+          ilike(storeProducts.subtitle, `%${query}%`),
+          ilike(storeProducts.category, `%${query}%`),
+        )!,
+      );
+    }
+    if (cat) filters.push(eq(storeProducts.category, cat));
+    const rows =
+      filters.length > 0
+        ? await this.db
+            .select()
+            .from(storeProducts)
+            .where(and(...filters))
+            .orderBy(asc(storeProducts.sortOrder), asc(storeProducts.title))
+        : await this.db
+            .select()
+            .from(storeProducts)
+            .orderBy(asc(storeProducts.sortOrder), asc(storeProducts.title));
+    return { products: rows.map((row) => this.toProductDto(row)) };
+  }
+
+  async listMember(q?: string, category?: string) {
+    await this.ensureSeeded();
+    const query = q?.trim();
+    const cat = category?.trim().toLowerCase();
+    const filters = [eq(storeProducts.active, true)];
+    if (query) {
+      filters.push(
+        or(
+          ilike(storeProducts.title, `%${query}%`),
+          ilike(storeProducts.subtitle, `%${query}%`),
+          ilike(storeProducts.category, `%${query}%`),
+        )!,
+      );
+    }
+    if (cat) filters.push(eq(storeProducts.category, cat));
+    const rows = await this.db
+      .select()
+      .from(storeProducts)
+      .where(and(...filters))
+      .orderBy(asc(storeProducts.sortOrder), asc(storeProducts.title));
+    return { products: rows.map((row) => this.toProductDto(row)) };
+  }
+
+  async create(input: StoreProductInput) {
+    await this.ensureSeeded();
+    const payload = await this.toProductRow(input, true);
+    const [existing] = await this.db
+      .select({ id: storeProducts.id })
+      .from(storeProducts)
+      .where(eq(storeProducts.slug, payload.slug))
+      .limit(1);
+    if (existing) {
+      throw new BadRequestException(`Slug “${payload.slug}” is already used`);
+    }
+    const [row] = await this.db.insert(storeProducts).values(payload).returning();
+    return { product: this.toProductDto(row!) };
+  }
+
+  async update(id: string, input: StoreProductInput) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(storeProducts)
+      .where(eq(storeProducts.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Product not found');
+
+    const payload = await this.toProductRow(input, false, current);
+    if (payload.slug !== current.slug) {
+      const [clash] = await this.db
+        .select({ id: storeProducts.id })
+        .from(storeProducts)
+        .where(eq(storeProducts.slug, payload.slug))
+        .limit(1);
+      if (clash) {
+        throw new BadRequestException(`Slug “${payload.slug}” is already used`);
+      }
+    }
+
+    const [row] = await this.db
+      .update(storeProducts)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(storeProducts.id, id))
+      .returning();
+    return { product: this.toProductDto(row!) };
+  }
+
+  async remove(id: string) {
+    const [row] = await this.db
+      .delete(storeProducts)
+      .where(eq(storeProducts.id, id))
+      .returning({ id: storeProducts.id });
+    if (!row) throw new NotFoundException('Product not found');
+    return { ok: true as const };
+  }
+
+  private async ensureSeeded() {
+    if (this.seeding) return this.seeding;
+    this.seeding = (async () => {
+      const [catCount] = await this.db.select({ n: count() }).from(storeCategories);
+      if ((catCount?.n ?? 0) === 0) {
+        for (const item of CATEGORY_SEED) {
+          await this.db.insert(storeCategories).values({
+            slug: item.slug,
+            label: item.label,
+            sortOrder: item.sortOrder,
+            active: true,
+          });
+        }
+      }
+
+      const [kindCount] = await this.db.select({ n: count() }).from(storeKinds);
+      if ((kindCount?.n ?? 0) === 0) {
+        for (const item of KIND_SEED) {
+          await this.db.insert(storeKinds).values({
+            slug: item.slug,
+            label: item.label,
+            sortOrder: item.sortOrder,
+            active: true,
+          });
+        }
+      }
+
+      const [prodCount] = await this.db.select({ n: count() }).from(storeProducts);
+      if ((prodCount?.n ?? 0) === 0) {
+        for (const item of STORE_SEED_PRODUCTS) {
+          await this.db.insert(storeProducts).values({
+            slug: item.slug,
+            title: item.title,
+            subtitle: item.subtitle,
+            description: item.description ?? null,
+            category: item.category,
+            kind: item.kind,
+            priceLabel: item.priceLabel,
+            pricePaise: item.pricePaise ?? null,
+            coinPrice: item.coinPrice ?? null,
+            imageUrl: item.imageUrl ?? null,
+            sizes: item.sizes?.length ? JSON.stringify(item.sizes) : null,
+            planId: item.planId ?? null,
+            active: true,
+            sortOrder: item.sortOrder,
+          });
+        }
+      } else {
+        // Backfill coin prices for known redeemable merch.
+        await this.db
+          .update(storeProducts)
+          .set({ coinPrice: 500, updatedAt: new Date() })
+          .where(
+            and(
+              eq(storeProducts.slug, 'tee-black'),
+              isNull(storeProducts.coinPrice),
+            ),
+          );
+      }
+    })().finally(() => {
+      this.seeding = null;
+    });
+    return this.seeding;
+  }
+
+  private async requireCategorySlug(slug: string) {
+    const [row] = await this.db
+      .select()
+      .from(storeCategories)
+      .where(eq(storeCategories.slug, slug))
+      .limit(1);
+    if (!row) throw new BadRequestException(`Unknown category “${slug}”`);
+    return row;
+  }
+
+  private async requireKindSlug(slug: string) {
+    const [row] = await this.db
+      .select()
+      .from(storeKinds)
+      .where(eq(storeKinds.slug, slug))
+      .limit(1);
+    if (!row) throw new BadRequestException(`Unknown kind “${slug}”`);
+    return row;
+  }
+
+  private async toProductRow(
+    input: StoreProductInput,
+    creating: boolean,
+    current?: typeof storeProducts.$inferSelect,
+  ) {
+    const title = (input.title ?? current?.title ?? '').trim();
+    if (!title) throw new BadRequestException('Title is required');
+
+    const slug = this.slugify(
+      (input.slug ?? current?.slug ?? title).trim() || title,
+    );
+    if (!slug) throw new BadRequestException('Slug is required');
+
+    const category = (input.category ?? current?.category ?? 'plans')
+      .trim()
+      .toLowerCase();
+    await this.requireCategorySlug(category);
+
+    const kind = (input.kind ?? current?.kind ?? (category === 'plans' ? 'plan' : 'merch'))
+      .trim()
+      .toLowerCase();
+    await this.requireKindSlug(kind);
+
+    const priceLabel = (input.priceLabel ?? current?.priceLabel ?? '').trim();
+    if (!priceLabel) throw new BadRequestException('priceLabel is required');
+
+    const sizes = this.normalizeSizes(
+      input.sizes !== undefined ? input.sizes : current?.sizes,
+    );
+
+    let planId =
+      input.planId !== undefined
+        ? input.planId?.trim() || null
+        : current?.planId ?? null;
+    if (kind === 'plan' && !planId) {
+      throw new BadRequestException('planId is required for plan products');
+    }
+    if (kind !== 'plan') planId = null;
+
+    const sortOrder =
+      input.sortOrder !== undefined
+        ? Number(input.sortOrder)
+        : (current?.sortOrder ?? 0);
+
+    return {
+      slug,
+      title,
+      subtitle: (input.subtitle ?? current?.subtitle ?? '').trim(),
+      description:
+        input.description !== undefined
+          ? input.description?.trim() || null
+          : current?.description ?? null,
+      category,
+      kind,
+      priceLabel,
+      pricePaise:
+        input.pricePaise !== undefined
+          ? input.pricePaise
+          : (current?.pricePaise ?? null),
+      coinPrice:
+        input.coinPrice !== undefined
+          ? input.coinPrice
+          : ((current as { coinPrice?: number | null } | undefined)?.coinPrice ??
+            null),
+      imageUrl:
+        input.imageUrl !== undefined
+          ? input.imageUrl?.trim() || null
+          : current?.imageUrl ?? null,
+      sizes: sizes.length ? JSON.stringify(sizes) : null,
+      planId,
+      active:
+        input.active !== undefined
+          ? Boolean(input.active)
+          : (current?.active ?? true),
+      sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+    };
+  }
+
+  private toTaxonomyRow(
+    input: StoreTaxonomyInput,
+    creating: boolean,
+    current?: { slug: string; label: string; sortOrder: number; active: boolean },
+  ) {
+    const label = (input.label ?? current?.label ?? '').trim();
+    if (!label) throw new BadRequestException('Label is required');
+    const slug = this.slugify(
+      (input.slug ?? current?.slug ?? label).trim() || label,
+    );
+    if (!slug) throw new BadRequestException('Slug is required');
+    const sortOrder =
+      input.sortOrder !== undefined
+        ? Number(input.sortOrder)
+        : (current?.sortOrder ?? (creating ? 100 : 0));
+    return {
+      slug,
+      label,
+      sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+      active:
+        input.active !== undefined
+          ? Boolean(input.active)
+          : (current?.active ?? true),
+    };
+  }
+
+  private normalizeSizes(raw: string[] | string | null | undefined): string[] {
+    if (raw == null) return [];
+    if (Array.isArray(raw)) {
+      return raw.map((s) => String(s).trim()).filter(Boolean);
+    }
+    const text = String(raw).trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.map((s) => String(s).trim()).filter(Boolean);
+      }
+    } catch {
+      /* comma-separated */
+    }
+    return text
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  private slugify(value: string) {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);
+  }
+
+  private toTaxonomyDto(row: {
+    id: string;
+    slug: string;
+    label: string;
+    sortOrder: number;
+    active: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }): StoreTaxonomyDto {
+    return {
+      id: row.id,
+      slug: row.slug,
+      label: row.label,
+      sortOrder: row.sortOrder,
+      active: row.active,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private toProductDto(row: typeof storeProducts.$inferSelect): StoreProductDto {
+    return {
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      subtitle: row.subtitle ?? '',
+      description: row.description,
+      category: row.category,
+      kind: row.kind,
+      priceLabel: row.priceLabel,
+      pricePaise: row.pricePaise,
+      coinPrice: row.coinPrice ?? null,
+      imageUrl: row.imageUrl,
+      sizes: this.normalizeSizes(row.sizes),
+      planId: row.planId,
+      active: row.active,
+      sortOrder: row.sortOrder,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async redeemWithCoins(
+    userId: string,
+    input: { productId?: string; size?: string },
+  ) {
+    const productId = input.productId?.trim();
+    if (!productId) throw new BadRequestException('productId is required');
+
+    const [product] = await this.db
+      .select()
+      .from(storeProducts)
+      .where(eq(storeProducts.id, productId))
+      .limit(1);
+    if (!product || !product.active) {
+      throw new NotFoundException('Product not found');
+    }
+    const coinPrice = product.coinPrice;
+    if (coinPrice == null || coinPrice <= 0) {
+      throw new BadRequestException('Product is not redeemable with coins');
+    }
+
+    const sizes = this.normalizeSizes(product.sizes);
+    const size = input.size?.trim() || null;
+    if (sizes.length && (!size || !sizes.includes(size))) {
+      throw new BadRequestException(`Choose a size: ${sizes.join(', ')}`);
+    }
+
+    const [redemption] = await this.db
+      .insert(coinRedemptions)
+      .values({
+        userId,
+        productId: product.id,
+        coinsSpent: coinPrice,
+        size,
+        status: 'pending',
+      })
+      .returning();
+
+    try {
+      const rewards = await this.wallet.debitCoins({
+        userId,
+        amount: coinPrice,
+        reason: 'store_redeem',
+        refType: 'redemption',
+        refId: redemption!.id,
+      });
+      return {
+        redemption: {
+          id: redemption!.id,
+          productId: product.id,
+          productTitle: product.title,
+          coinsSpent: coinPrice,
+          size,
+          status: redemption!.status,
+          createdAt: redemption!.createdAt.toISOString(),
+        },
+        rewards,
+      };
+    } catch (err) {
+      await this.db
+        .delete(coinRedemptions)
+        .where(eq(coinRedemptions.id, redemption!.id));
+      throw err;
+    }
+  }
+
+  async listRedemptions(opts?: { status?: string; limit?: number }) {
+    const limit = Math.min(200, Math.max(1, opts?.limit ?? 50));
+    const rows = opts?.status
+      ? await this.db
+          .select({
+            redemption: coinRedemptions,
+            productTitle: storeProducts.title,
+            productSlug: storeProducts.slug,
+          })
+          .from(coinRedemptions)
+          .innerJoin(
+            storeProducts,
+            eq(coinRedemptions.productId, storeProducts.id),
+          )
+          .where(eq(coinRedemptions.status, opts.status))
+          .orderBy(desc(coinRedemptions.createdAt))
+          .limit(limit)
+      : await this.db
+          .select({
+            redemption: coinRedemptions,
+            productTitle: storeProducts.title,
+            productSlug: storeProducts.slug,
+          })
+          .from(coinRedemptions)
+          .innerJoin(
+            storeProducts,
+            eq(coinRedemptions.productId, storeProducts.id),
+          )
+          .orderBy(desc(coinRedemptions.createdAt))
+          .limit(limit);
+
+    return {
+      redemptions: rows.map((r) => ({
+        id: r.redemption.id,
+        userId: r.redemption.userId,
+        productId: r.redemption.productId,
+        productTitle: r.productTitle,
+        productSlug: r.productSlug,
+        coinsSpent: r.redemption.coinsSpent,
+        size: r.redemption.size,
+        status: r.redemption.status,
+        notes: r.redemption.notes,
+        createdAt: r.redemption.createdAt.toISOString(),
+        updatedAt: r.redemption.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  async updateRedemptionStatus(
+    id: string,
+    input: { status?: string; notes?: string | null },
+  ) {
+    const status = input.status?.trim();
+    if (!status || !['pending', 'fulfilled', 'cancelled'].includes(status)) {
+      throw new BadRequestException('status must be pending|fulfilled|cancelled');
+    }
+    const [current] = await this.db
+      .select()
+      .from(coinRedemptions)
+      .where(eq(coinRedemptions.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Redemption not found');
+
+    if (status === 'cancelled' && current.status === 'pending') {
+      await this.wallet.creditCoins({
+        userId: current.userId,
+        amount: current.coinsSpent,
+        reason: 'redeem_refund',
+        refType: 'redemption',
+        refId: current.id,
+      });
+    }
+
+    const [updated] = await this.db
+      .update(coinRedemptions)
+      .set({
+        status,
+        notes:
+          input.notes !== undefined
+            ? input.notes?.trim() || null
+            : current.notes,
+        updatedAt: new Date(),
+      })
+      .where(eq(coinRedemptions.id, id))
+      .returning();
+
+    return {
+      redemption: {
+        id: updated!.id,
+        userId: updated!.userId,
+        productId: updated!.productId,
+        coinsSpent: updated!.coinsSpent,
+        size: updated!.size,
+        status: updated!.status,
+        notes: updated!.notes,
+        createdAt: updated!.createdAt.toISOString(),
+        updatedAt: updated!.updatedAt.toISOString(),
+      },
+    };
+  }
+}

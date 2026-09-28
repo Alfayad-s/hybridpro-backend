@@ -85,4 +85,50 @@ export class CloudinaryService {
       throw new BadRequestException(`Failed to upload ${params.kind}`);
     }
   }
+
+  async uploadChatImage(params: {
+    memberUserId: string;
+    buffer: Buffer;
+  }): Promise<{ url: string; publicId: string }> {
+    const safeId = params.memberUserId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48) || 'member';
+    const folder = `gymtrack/chat/member-${safeId}`;
+    const publicId = `msg-${Date.now().toString(36)}`;
+
+    try {
+      const result = await this.uploadBuffer(params.buffer, {
+        folder,
+        public_id: publicId,
+        overwrite: false,
+        resource_type: 'image',
+        transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto' }],
+      });
+      return { url: result.secure_url, publicId: result.public_id };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      console.error('[cloudinary.chat]', error);
+      throw new BadRequestException('Failed to upload chat image');
+    }
+  }
+
+  async uploadStoreImage(params: {
+    buffer: Buffer;
+  }): Promise<{ url: string; publicId: string }> {
+    const folder = 'gymtrack/store/products';
+    const publicId = `product-${Date.now().toString(36)}`;
+
+    try {
+      const result = await this.uploadBuffer(params.buffer, {
+        folder,
+        public_id: publicId,
+        overwrite: false,
+        resource_type: 'image',
+        transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto' }],
+      });
+      return { url: result.secure_url, publicId: result.public_id };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      console.error('[cloudinary.store]', error);
+      throw new BadRequestException('Failed to upload product image');
+    }
+  }
 }

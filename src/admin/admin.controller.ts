@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UploadedFile,
   UseGuards,
@@ -25,7 +26,13 @@ import { ChatService } from '../chat/chat.service.js';
 import { CloudinaryService } from '../media/cloudinary.service.js';
 import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
+import { StoreService } from '../store/store.service.js';
 import { ExercisesService } from '../workout/exercises.service.js';
+import {
+  MealLibraryService,
+  type MealLibraryInput,
+} from '../workout/meal-library.service.js';
+import { EngagementService } from '../engagement/engagement.service.js';
 import { WorkoutService } from '../workout/workout.service.js';
 
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -46,6 +53,9 @@ export class AdminController {
     private readonly devices: DeviceTokensService,
     private readonly gym: GymAttendanceService,
     private readonly chat: ChatService,
+    private readonly store: StoreService,
+    private readonly mealLibrary: MealLibraryService,
+    private readonly engagement: EngagementService,
   ) {}
 
   @Post('auth/login')
@@ -57,7 +67,7 @@ export class AdminController {
   @UseGuards(CoachGuard)
   registerDevice(
     @Headers('x-coach-email') coachEmail: string,
-    @Body() body: { token?: string; platform?: string },
+    @Body() body: { token?: string; platform?: string; deviceId?: string },
   ) {
     return this.devices.registerCoach(coachEmail || '', body);
   }
@@ -177,13 +187,37 @@ export class AdminController {
     if (!detail) throw new NotFoundException('Client not found');
     const desk = await this.coaching.getDesk(id);
     let assignedPlans: Awaited<ReturnType<WorkoutService['listAssigned']>>['plans'] = [];
+    let assignedMealPlans: Awaited<
+      ReturnType<WorkoutService['listAssignedMealPlans']>
+    >['mealPlans'] = [];
+    let assignedWaterChallenges: Awaited<
+      ReturnType<WorkoutService['listAssignedWaterChallenges']>
+    >['waterChallenges'] = [];
     try {
       const assigned = await this.workouts.listAssigned(id);
       assignedPlans = assigned.plans;
     } catch (error) {
       console.error('[assigned_plans]', error);
     }
-    return { ...detail, ...desk, assignedPlans };
+    try {
+      const meals = await this.workouts.listAssignedMealPlans(id);
+      assignedMealPlans = meals.mealPlans;
+    } catch (error) {
+      console.error('[assigned_meals]', error);
+    }
+    try {
+      const water = await this.workouts.listAssignedWaterChallenges(id);
+      assignedWaterChallenges = water.waterChallenges;
+    } catch (error) {
+      console.error('[assigned_water]', error);
+    }
+    return {
+      ...detail,
+      ...desk,
+      assignedPlans,
+      assignedMealPlans,
+      assignedWaterChallenges,
+    };
   }
 
   @Patch('clients/:id')
@@ -233,6 +267,172 @@ export class AdminController {
     return this.coaching
       .replyToCheckin(id, checkinId, body.coachReply || '')
       .then((checkin) => ({ checkin }));
+  }
+
+  @Get('products/categories')
+  @UseGuards(CoachGuard)
+  productCategories() {
+    return this.store.listCategories();
+  }
+
+  @Post('products/categories')
+  @UseGuards(CoachGuard)
+  createProductCategory(
+    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+  ) {
+    return this.store.createCategory(body);
+  }
+
+  @Patch('products/categories/:id')
+  @UseGuards(CoachGuard)
+  updateProductCategory(
+    @Param('id') id: string,
+    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+  ) {
+    return this.store.updateCategory(id, body);
+  }
+
+  @Delete('products/categories/:id')
+  @UseGuards(CoachGuard)
+  deleteProductCategory(@Param('id') id: string) {
+    return this.store.removeCategory(id);
+  }
+
+  @Get('products/kinds')
+  @UseGuards(CoachGuard)
+  productKinds() {
+    return this.store.listKinds();
+  }
+
+  @Post('products/kinds')
+  @UseGuards(CoachGuard)
+  createProductKind(
+    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+  ) {
+    return this.store.createKind(body);
+  }
+
+  @Patch('products/kinds/:id')
+  @UseGuards(CoachGuard)
+  updateProductKind(
+    @Param('id') id: string,
+    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+  ) {
+    return this.store.updateKind(id, body);
+  }
+
+  @Delete('products/kinds/:id')
+  @UseGuards(CoachGuard)
+  deleteProductKind(@Param('id') id: string) {
+    return this.store.removeKind(id);
+  }
+
+  @Get('products')
+  @UseGuards(CoachGuard)
+  products(@Query('q') q?: string, @Query('category') category?: string) {
+    return this.store.listAdmin(q, category);
+  }
+
+  @Post('products')
+  @UseGuards(CoachGuard)
+  createProduct(
+    @Body()
+    body: {
+      title?: string;
+      slug?: string;
+      subtitle?: string;
+      description?: string | null;
+      category?: string;
+      kind?: string;
+      priceLabel?: string;
+      pricePaise?: number | null;
+      coinPrice?: number | null;
+      imageUrl?: string | null;
+      sizes?: string[] | string;
+      planId?: string | null;
+      active?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.store.create(body);
+  }
+
+  @Patch('products/:id')
+  @UseGuards(CoachGuard)
+  updateProduct(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      title?: string;
+      slug?: string;
+      subtitle?: string;
+      description?: string | null;
+      category?: string;
+      kind?: string;
+      priceLabel?: string;
+      pricePaise?: number | null;
+      coinPrice?: number | null;
+      imageUrl?: string | null;
+      sizes?: string[] | string;
+      planId?: string | null;
+      active?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.store.update(id, body);
+  }
+
+  @Delete('products/:id')
+  @UseGuards(CoachGuard)
+  deleteProduct(@Param('id') id: string) {
+    return this.store.remove(id);
+  }
+
+  @Get('redemptions')
+  @UseGuards(CoachGuard)
+  listRedemptions(
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.store.listRedemptions({
+      status,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Patch('redemptions/:id')
+  @UseGuards(CoachGuard)
+  updateRedemption(
+    @Param('id') id: string,
+    @Body() body: { status?: string; notes?: string | null },
+  ) {
+    return this.store.updateRedemptionStatus(id, body ?? {});
+  }
+
+  @Post('products/media')
+  @UseGuards(CoachGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: IMAGE_MAX_BYTES },
+    }),
+  )
+  async uploadProductMedia(
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required');
+    }
+    if (!IMAGE_TYPES.has(file.mimetype)) {
+      throw new BadRequestException('Use a JPG, PNG, WEBP, or GIF image');
+    }
+    if (file.size > IMAGE_MAX_BYTES) {
+      throw new BadRequestException('Image must be under 5MB');
+    }
+    const uploaded = await this.cloudinary.uploadStoreImage({
+      buffer: file.buffer,
+    });
+    return { url: uploaded.url, publicId: uploaded.publicId };
   }
 
   @Get('exercises')
@@ -342,6 +542,30 @@ export class AdminController {
     };
   }
 
+  @Get('meals')
+  @UseGuards(CoachGuard)
+  meals(@Query('q') q?: string, @Query('type') type?: string) {
+    return this.mealLibrary.list(q, type);
+  }
+
+  @Post('meals')
+  @UseGuards(CoachGuard)
+  createMeal(@Body() body: MealLibraryInput) {
+    return this.mealLibrary.create(body ?? {});
+  }
+
+  @Patch('meals/:id')
+  @UseGuards(CoachGuard)
+  updateMeal(@Param('id') id: string, @Body() body: MealLibraryInput) {
+    return this.mealLibrary.update(id, body ?? {});
+  }
+
+  @Delete('meals/:id')
+  @UseGuards(CoachGuard)
+  deleteMeal(@Param('id') id: string) {
+    return this.mealLibrary.remove(id);
+  }
+
   @Get('clients/:id/workout-plans')
   @UseGuards(CoachGuard)
   assignedPlans(@Param('id') id: string) {
@@ -363,6 +587,8 @@ export class AdminController {
         targetSets?: number;
         targetReps?: number;
         restSeconds?: number;
+        targetRpe?: number;
+        targetRir?: number;
         notes?: string;
       }[];
       days?: {
@@ -375,6 +601,8 @@ export class AdminController {
           targetSets?: number;
           targetReps?: number;
           restSeconds?: number;
+          targetRpe?: number;
+          targetRir?: number;
           notes?: string;
         }[];
       }[];
@@ -402,6 +630,8 @@ export class AdminController {
           targetSets?: number;
           targetReps?: number;
           restSeconds?: number;
+          targetRpe?: number;
+          targetRir?: number;
           notes?: string;
         }[];
       }[];
@@ -414,6 +644,119 @@ export class AdminController {
   @UseGuards(CoachGuard)
   unassignPlan(@Param('id') id: string, @Param('planId') planId: string) {
     return this.workouts.unassignPlan(id, planId);
+  }
+
+  @Get('clients/:id/meal-plans')
+  @UseGuards(CoachGuard)
+  assignedMealPlans(@Param('id') id: string) {
+    return this.workouts.listAssignedMealPlans(id);
+  }
+
+  @Post('clients/:id/meal-plans')
+  @UseGuards(CoachGuard)
+  assignMealPlan(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      description?: string;
+      days?: {
+        dayOfWeek: number;
+        meals?: {
+          type?: string;
+          name?: string;
+          calories?: number;
+          proteinG?: number;
+          carbsG?: number;
+          fatG?: number;
+          notes?: string;
+          imageUrl?: string;
+        }[];
+      }[];
+    },
+  ) {
+    return this.workouts.assignMealPlan(id, body);
+  }
+
+  @Patch('clients/:id/meal-plans/:planId')
+  @UseGuards(CoachGuard)
+  updateMealPlan(
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Body()
+    body: {
+      name?: string;
+      description?: string;
+      days?: {
+        dayOfWeek: number;
+        meals?: {
+          type?: string;
+          name?: string;
+          calories?: number;
+          proteinG?: number;
+          carbsG?: number;
+          fatG?: number;
+          notes?: string;
+          imageUrl?: string;
+        }[];
+      }[];
+    },
+  ) {
+    return this.workouts.updateMealPlan(id, planId, body);
+  }
+
+  @Delete('clients/:id/meal-plans/:planId')
+  @UseGuards(CoachGuard)
+  unassignMealPlan(@Param('id') id: string, @Param('planId') planId: string) {
+    return this.workouts.unassignMealPlan(id, planId);
+  }
+
+  @Get('clients/:id/water-challenges')
+  @UseGuards(CoachGuard)
+  assignedWaterChallenges(@Param('id') id: string) {
+    return this.workouts.listAssignedWaterChallenges(id);
+  }
+
+  @Post('clients/:id/water-challenges')
+  @UseGuards(CoachGuard)
+  assignWaterChallenge(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      title?: string;
+      description?: string;
+      targetMlPerDay?: number;
+      durationDays?: number;
+      startDate?: string;
+    },
+  ) {
+    return this.workouts.assignWaterChallenge(id, body);
+  }
+
+  @Patch('clients/:id/water-challenges/:challengeId')
+  @UseGuards(CoachGuard)
+  updateWaterChallenge(
+    @Param('id') id: string,
+    @Param('challengeId') challengeId: string,
+    @Body()
+    body: {
+      title?: string;
+      description?: string;
+      targetMlPerDay?: number;
+      durationDays?: number;
+      startDate?: string;
+    },
+  ) {
+    return this.workouts.updateWaterChallenge(id, challengeId, body);
+  }
+
+  @Delete('clients/:id/water-challenges/:challengeId')
+  @UseGuards(CoachGuard)
+  unassignWaterChallenge(
+    @Param('id') id: string,
+    @Param('challengeId') challengeId: string,
+  ) {
+    return this.workouts.unassignWaterChallenge(id, challengeId);
   }
 
   @Get('contacts')
@@ -455,5 +798,26 @@ export class AdminController {
       submission: converted ?? submission,
       subscription: result.subscription,
     };
+  }
+
+  @Get('engagement')
+  @UseGuards(CoachGuard)
+  engagementSettings() {
+    return this.engagement.adminView();
+  }
+
+  @Put('engagement')
+  @UseGuards(CoachGuard)
+  updateEngagementSettings(@Body() body: Record<string, unknown>) {
+    return this.engagement.updateAdminSettings(body ?? {});
+  }
+
+  @Put('engagement/templates/:type')
+  @UseGuards(CoachGuard)
+  updateEngagementTemplate(
+    @Param('type') type: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.engagement.updateTemplate(type, body ?? {});
   }
 }

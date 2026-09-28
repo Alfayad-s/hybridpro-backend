@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey().notNull(),
@@ -189,6 +189,24 @@ export const exercises = pgTable(
   (t) => [uniqueIndex('exercises_slug_uidx').on(t.slug)],
 );
 
+export const mealLibrary = pgTable(
+  'meal_library',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    type: text('type').notNull().default('lunch'),
+    calories: integer('calories').notNull().default(0),
+    proteinG: integer('protein_g').notNull().default(0),
+    carbsG: integer('carbs_g').notNull().default(0),
+    fatG: integer('fat_g').notNull().default(0),
+    notes: text('notes'),
+    imageUrl: text('image_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [index('meal_library_type_idx').on(t.type, t.name)],
+);
+
 export const deviceTokens = pgTable(
   'device_tokens',
   {
@@ -198,6 +216,8 @@ export const deviceTokens = pgTable(
     coachEmail: text('coach_email'),
     token: text('token').notNull(),
     platform: text('platform').notNull(),
+    deviceId: text('device_id'),
+    lastActiveAt: timestamp('last_active_at'),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (t) => [
@@ -261,4 +281,251 @@ export const coachMessages = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [index('coach_messages_conv_created_idx').on(t.conversationId, t.createdAt)],
+);
+
+/** Hybrid Pro store catalog (plans + merch). */
+export const storeCategories = pgTable(
+  'store_categories',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull(),
+    label: text('label').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('store_categories_slug_uidx').on(t.slug)],
+);
+
+export const storeKinds = pgTable(
+  'store_kinds',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull(),
+    label: text('label').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('store_kinds_slug_uidx').on(t.slug)],
+);
+
+export const storeProducts = pgTable(
+  'store_products',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull(),
+    title: text('title').notNull(),
+    subtitle: text('subtitle').notNull().default(''),
+    description: text('description'),
+    /** slug from store_categories, e.g. plans | tees */
+    category: text('category').notNull(),
+    /** slug from store_kinds, e.g. plan | merch */
+    kind: text('kind').notNull().default('merch'),
+    priceLabel: text('price_label').notNull(),
+    pricePaise: integer('price_paise'),
+    /** Coin redeem price; null = cash-only */
+    coinPrice: integer('coin_price'),
+    imageUrl: text('image_url'),
+    /** JSON array of size strings, e.g. ["S","M","L"] */
+    sizes: text('sizes'),
+    planId: text('plan_id'),
+    active: boolean('active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('store_products_slug_uidx').on(t.slug),
+    index('store_products_category_idx').on(t.category),
+    index('store_products_active_idx').on(t.active),
+  ],
+);
+
+/** Member XP / coins / challenge streak / badges. */
+export const userRewards = pgTable(
+  'user_rewards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    level: integer('level').notNull().default(1),
+    xp: integer('xp').notNull().default(0),
+    coins: integer('coins').notNull().default(0),
+    currentStreak: integer('current_streak').notNull().default(0),
+    longestStreak: integer('longest_streak').notNull().default(0),
+    lastCompletedDate: text('last_completed_date'),
+    badges: text('badges').notNull().default('[]'),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('user_rewards_user_uidx').on(t.userId)],
+);
+
+/** Daily / weekly / monthly challenge instances. */
+export const dailyChallenges = pgTable(
+  'daily_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    date: text('date').notNull(),
+    period: text('period').notNull().default('daily'),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    category: text('category').notNull(),
+    difficulty: text('difficulty').notNull(),
+    targetValue: text('target_value').notNull(),
+    currentValue: text('current_value').notNull().default('0'),
+    unit: text('unit').notNull(),
+    status: text('status').notNull().default('pending'),
+    xpReward: integer('xp_reward').notNull(),
+    coinReward: integer('coin_reward').notNull(),
+    badgeReward: text('badge_reward'),
+    icon: text('icon'),
+    color: text('color'),
+    autoComplete: boolean('auto_complete').notNull().default(false),
+    completedAt: timestamp('completed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('daily_challenges_user_date_idx').on(t.userId, t.date),
+    index('daily_challenges_user_status_idx').on(t.userId, t.status),
+  ],
+);
+
+export const challengeHistory = pgTable(
+  'challenge_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    challengeId: uuid('challenge_id')
+      .references(() => dailyChallenges.id, { onDelete: 'cascade' })
+      .notNull(),
+    completedAt: timestamp('completed_at').defaultNow().notNull(),
+    xpEarned: integer('xp_earned').notNull(),
+    coinsEarned: integer('coins_earned').notNull(),
+  },
+  (t) => [index('challenge_history_user_idx').on(t.userId, t.completedAt)],
+);
+
+/** Append-only coin earn/spend ledger. */
+export const coinLedger = pgTable(
+  'coin_ledger',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    delta: integer('delta').notNull(),
+    balanceAfter: integer('balance_after').notNull(),
+    reason: text('reason').notNull(),
+    refType: text('ref_type'),
+    refId: text('ref_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('coin_ledger_user_idx').on(t.userId, t.createdAt)],
+);
+
+/** Store product claims paid with coins. */
+export const coinRedemptions = pgTable(
+  'coin_redemptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    productId: uuid('product_id')
+      .references(() => storeProducts.id, { onDelete: 'restrict' })
+      .notNull(),
+    coinsSpent: integer('coins_spent').notNull(),
+    size: text('size'),
+    status: text('status').notNull().default('pending'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('coin_redemptions_user_idx').on(t.userId, t.createdAt),
+    index('coin_redemptions_status_idx').on(t.status),
+  ],
+);
+
+/** Clocks the member confirmed. Null clocks mean "use the engine default". */
+export const memberRoutines = pgTable('member_routines', {
+  userId: uuid('user_id').primaryKey().notNull(),
+  timezone: text('timezone').notNull().default('Asia/Kolkata'),
+  wakeMinutes: integer('wake_minutes'),
+  gymMinutes: integer('gym_minutes'),
+  breakfastMinutes: integer('breakfast_minutes'),
+  lunchMinutes: integer('lunch_minutes'),
+  dinnerMinutes: integer('dinner_minutes'),
+  sleepMinutes: integer('sleep_minutes'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+/** Per-member overrides. Null quiet hours mean "use the global window". */
+export const engagementPreferences = pgTable('engagement_preferences', {
+  userId: uuid('user_id').primaryKey().notNull(),
+  workout: boolean('workout').notNull().default(true),
+  meals: boolean('meals').notNull().default(true),
+  hydration: boolean('hydration').notNull().default(true),
+  sleep: boolean('sleep').notNull().default(true),
+  motivation: boolean('motivation').notNull().default(true),
+  streak: boolean('streak').notNull().default(true),
+  quietStartMinutes: integer('quiet_start_minutes'),
+  quietEndMinutes: integer('quiet_end_minutes'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+/** One global row. Member preferences override these. */
+export const engagementSettings = pgTable('engagement_settings', {
+  id: text('id').primaryKey().notNull().default('default'),
+  dailyLimit: integer('daily_limit').notNull().default(6),
+  quietStartMinutes: integer('quiet_start_minutes').notNull().default(22 * 60 + 30),
+  quietEndMinutes: integer('quiet_end_minutes').notNull().default(7 * 60),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+/** Admin-editable copy. Seeded from the fixed catalog; restarts do not overwrite edits. */
+export const notificationTemplates = pgTable('notification_templates', {
+  type: text('type').primaryKey().notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  deepLink: text('deep_link').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  priority: text('priority').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+/**
+ * Claim log for engagement pushes. One SEND per member, type, local date, and
+ * occurrence (hydration may use 2). A retry that inserts again does not send.
+ */
+export const notificationLogs = pgTable(
+  'notification_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    type: text('type').notNull(),
+    localDate: text('local_date').notNull(),
+    occurrence: integer('occurrence').notNull().default(1),
+    result: text('result').notNull().default('SEND'),
+    reason: text('reason').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('notification_logs_send_uidx').on(t.userId, t.type, t.localDate, t.occurrence),
+    index('notification_logs_user_day_idx').on(t.userId, t.localDate),
+  ],
+);
+
+/** Member actions used later for suggestions. Not a copy of workouts or meals. */
+export const engagementEvents = pgTable(
+  'engagement_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    type: text('type').notNull(),
+    localDate: text('local_date'),
+    payload: text('payload'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('engagement_events_user_idx').on(t.userId, t.createdAt)],
 );

@@ -23,11 +23,17 @@ import { FcmService } from './notifications/fcm.service.js';
 import { PaymentsController } from './payments/payments.controller.js';
 import { EventsGateway } from './realtime/events.gateway.js';
 import { RealtimeFanoutService } from './realtime/realtime-fanout.service.js';
+import { StoreService } from './store/store.service.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
 import { SubscriptionService } from './subscriptions/subscription.service.js';
 import { ExercisesController } from './workout/exercises.controller.js';
 import { ExercisesService } from './workout/exercises.service.js';
+import { MealLibraryService } from './workout/meal-library.service.js';
 import { WorkoutService } from './workout/workout.service.js';
+import { EngagementScheduler } from './engagement/engagement.scheduler.js';
+import { EngagementService } from './engagement/engagement.service.js';
+import { ChallengesService } from './rewards/challenges.service.js';
+import { WalletService } from './rewards/wallet.service.js';
 
 @Module({
   imports: [
@@ -58,6 +64,7 @@ import { WorkoutService } from './workout/workout.service.js';
     SubscriptionService,
     CoachingService,
     ExercisesService,
+    MealLibraryService,
     WorkoutService,
     ContactService,
     AuthService,
@@ -69,6 +76,11 @@ import { WorkoutService } from './workout/workout.service.js';
     RealtimeFanoutService,
     GymAttendanceService,
     ChatService,
+    WalletService,
+    ChallengesService,
+    EngagementService,
+    EngagementScheduler,
+    StoreService,
     InternalGuard,
     CoachGuard,
     MemberGuard,

@@ -21,8 +21,9 @@ export class RealtimeFanoutService {
     payload: FanoutPayload,
     notification?: { title: string; body: string },
   ) {
+    const enriched = this.withNotice(payload, notification);
     try {
-      this.gateway.emitToMember(userId, event, payload);
+      this.gateway.emitToMember(userId, event, enriched);
     } catch (error) {
       this.logger.warn(`WS member emit failed: ${error instanceof Error ? error.message : error}`);
     }
@@ -31,7 +32,7 @@ export class RealtimeFanoutService {
       await this.fcm.sendToMember(userId, {
         title: notification.title,
         body: notification.body,
-        data: this.stringifyData(payload),
+        data: this.stringifyData(enriched),
       });
     }
   }
@@ -41,8 +42,9 @@ export class RealtimeFanoutService {
     payload: FanoutPayload,
     notification?: { title: string; body: string },
   ) {
+    const enriched = this.withNotice(payload, notification);
     try {
-      this.gateway.emitToCoaches(event, payload);
+      this.gateway.emitToCoaches(event, enriched);
     } catch (error) {
       this.logger.warn(`WS coach emit failed: ${error instanceof Error ? error.message : error}`);
     }
@@ -51,9 +53,21 @@ export class RealtimeFanoutService {
       await this.fcm.sendToCoaches({
         title: notification.title,
         body: notification.body,
-        data: this.stringifyData(payload),
+        data: this.stringifyData(enriched),
       });
     }
+  }
+
+  private withNotice(
+    payload: FanoutPayload,
+    notification?: { title: string; body: string },
+  ): FanoutPayload {
+    if (!notification) return payload;
+    return {
+      ...payload,
+      noticeTitle: notification.title,
+      noticeBody: notification.body,
+    };
   }
 
   private stringifyData(payload: FanoutPayload): Record<string, string> {

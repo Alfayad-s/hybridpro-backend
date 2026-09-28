@@ -6,14 +6,19 @@ import {
   Get,
   HttpCode,
   Inject,
+  Param,
   Patch,
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { memoryStorage } from 'multer';
 import { CurrentMember } from '../auth/member.decorator.js';
 import { MemberGuard } from '../auth/member.guard.js';
 import type { MemberUser } from '../auth/member.types.js';
@@ -21,10 +26,15 @@ import { DB } from '../db/db.module.js';
 import { profiles } from '../db/schema.js';
 import { GymAttendanceService } from '../gym/gym-attendance.service.js';
 import { ChatService } from '../chat/chat.service.js';
+import { CloudinaryService } from '../media/cloudinary.service.js';
 import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
+import { StoreService } from '../store/store.service.js';
 import { ExercisesService } from '../workout/exercises.service.js';
 import { WorkoutService } from '../workout/workout.service.js';
+import { EngagementService } from '../engagement/engagement.service.js';
+import { ChallengesService } from '../rewards/challenges.service.js';
+import { WalletService } from '../rewards/wallet.service.js';
 
 type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
 
@@ -39,6 +49,9 @@ type UpdateMeBody = {
   fullName?: string;
 };
 
+const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CHAT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
 @Controller('me')
 @UseGuards(MemberGuard)
 export class MeController {
@@ -49,6 +62,11 @@ export class MeController {
     private readonly devices: DeviceTokensService,
     private readonly gym: GymAttendanceService,
     private readonly chat: ChatService,
+    private readonly cloudinary: CloudinaryService,
+    private readonly store: StoreService,
+    private readonly wallet: WalletService,
+    private readonly challenges: ChallengesService,
+    private readonly engagement: EngagementService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
@@ -304,15 +322,21 @@ export class MeController {
   }
 
   @Put('sync')
-  syncPut(@CurrentMember() member: MemberUser, @Body() body: unknown) {
-    return this.workouts.putUserSync(member.userId, body);
+  async syncPut(@CurrentMember() member: MemberUser, @Body() body: unknown) {
+    const merged = await this.workouts.putUserSync(member.userId, body);
+    try {
+      await this.challenges.syncProgress(member.userId);
+    } catch {
+      /* non-fatal */
+    }
+    return merged;
   }
 
   @Post('devices')
   @HttpCode(200)
   registerDevice(
     @CurrentMember() member: MemberUser,
-    @Body() body: { token?: string; platform?: string },
+    @Body() body: { token?: string; platform?: string; deviceId?: string },
   ) {
     return this.devices.registerMember(member.userId, body);
   }
@@ -342,6 +366,24 @@ export class MeController {
     return this.gym.checkOut(member);
   }
 
+  @Get('store/categories')
+  storeCategories() {
+    return this.store.listCategories({ activeOnly: true });
+  }
+
+  @Get('store/kinds')
+  storeKinds() {
+    return this.store.listKinds({ activeOnly: true });
+  }
+
+  @Get('store/products')
+  storeProducts(
+    @Query('q') q?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.store.listMember(q, category);
+  }
+
   @Get('chat')
   chatThread(
     @CurrentMember() member: MemberUser,
@@ -366,9 +408,40 @@ export class MeController {
   @HttpCode(200)
   sendChatMessage(
     @CurrentMember() member: MemberUser,
-    @Body() body: { body?: string },
+    @Body() body: { body?: string; imageUrl?: string },
   ) {
-    return this.chat.sendMemberMessage(member, body?.body);
+    return this.chat.sendMemberMessage(member, {
+      body: body?.body,
+      imageUrl: body?.imageUrl,
+    });
+  }
+
+  @Post('chat/media')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: CHAT_IMAGE_MAX_BYTES },
+    }),
+  )
+  async uploadChatMedia(
+    @CurrentMember() member: MemberUser,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required');
+    }
+    if (!CHAT_IMAGE_TYPES.has(file.mimetype)) {
+      throw new BadRequestException('Use a JPG, PNG, WEBP, or GIF image');
+    }
+    if (file.size > CHAT_IMAGE_MAX_BYTES) {
+      throw new BadRequestException('Image must be under 5MB');
+    }
+    const uploaded = await this.cloudinary.uploadChatImage({
+      memberUserId: member.userId,
+      buffer: file.buffer,
+    });
+    return { url: uploaded.url, publicId: uploaded.publicId };
   }
 
   @Post('chat/read')
@@ -387,10 +460,109 @@ export class MeController {
 
   @Post('water')
   @HttpCode(200)
-  logWater(
+  async logWater(
     @CurrentMember() member: MemberUser,
     @Body() body: { amountMl?: number; date?: string; id?: string },
   ) {
-    return this.workouts.logWater(member.userId, body ?? {});
+    const result = await this.workouts.logWater(member.userId, body ?? {});
+    try {
+      await this.challenges.syncProgress(member.userId);
+    } catch {
+      /* non-fatal */
+    }
+    return result;
+  }
+
+  @Get('rewards')
+  async getRewards(@CurrentMember() member: MemberUser) {
+    const rewards = await this.wallet.ensure(member.userId);
+    return { rewards };
+  }
+
+  @Get('rewards/history')
+  async rewardsHistory(
+    @CurrentMember() member: MemberUser,
+    @Query('limit') limit?: string,
+  ) {
+    const n = limit ? Number(limit) : 30;
+    const [challengeHistory, ledger] = await Promise.all([
+      this.challenges.listHistory(member.userId, n),
+      this.wallet.listLedger(member.userId, n),
+    ]);
+    return { challengeHistory, ledger };
+  }
+
+  @Get('challenges')
+  getChallenges(
+    @CurrentMember() member: MemberUser,
+    @Query('date') date?: string,
+  ) {
+    return this.challenges.ensureToday(member.userId, date);
+  }
+
+  @Post('challenges/:id/complete')
+  @HttpCode(200)
+  completeChallenge(
+    @CurrentMember() member: MemberUser,
+    @Param('id') id: string,
+    @Body() body: { currentValue?: number },
+  ) {
+    return this.challenges.complete(member.userId, id, body?.currentValue);
+  }
+
+  @Post('challenges/:id/skip')
+  @HttpCode(200)
+  skipChallenge(
+    @CurrentMember() member: MemberUser,
+    @Param('id') id: string,
+  ) {
+    return this.challenges.skip(member.userId, id).then((challenge) => ({
+      challenge,
+    }));
+  }
+
+  @Post('challenges/refresh')
+  @HttpCode(200)
+  refreshChallenges(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { date?: string },
+  ) {
+    return this.challenges.refreshDaily(member.userId, body?.date);
+  }
+
+  @Get('engagement/today')
+  engagementToday(@CurrentMember() member: MemberUser, @Query('timezone') timezone?: string) {
+    return this.engagement.today(member.userId, timezone);
+  }
+
+  @Put('engagement/routine')
+  updateEngagementRoutine(@CurrentMember() member: MemberUser, @Body() body: Record<string, unknown>) {
+    return this.engagement.updateRoutine(member.userId, body ?? {});
+  }
+
+  @Put('engagement/preferences')
+  updateEngagementPreferences(
+    @CurrentMember() member: MemberUser,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.engagement.updatePreferences(member.userId, body ?? {});
+  }
+
+  @Post('engagement/meals/skip')
+  @HttpCode(200)
+  skipEngagementMeal(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { meal?: string },
+  ) {
+    return this.engagement.skipMeal(member.userId, body?.meal);
+  }
+
+  @Post('store/redeem')
+  @HttpCode(200)
+  redeemStore(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { productId?: string; size?: string },
+  ) {
+    return this.store.redeemWithCoins(member.userId, body ?? {});
   }
 }

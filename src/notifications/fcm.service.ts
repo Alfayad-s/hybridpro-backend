@@ -62,18 +62,28 @@ export class FcmService implements OnModuleInit {
 
   async sendToMember(userId: string, payload: FcmPayload) {
     const tokens = await this.devices.tokensForMember(userId);
-    await this.sendToTokens(tokens, payload);
+    await this.sendToTokens(tokens, payload, 'hybrid_pro_push');
   }
 
   async sendToCoaches(payload: FcmPayload) {
     const tokens = await this.devices.tokensForCoaches();
-    await this.sendToTokens(tokens, payload);
+    await this.sendToTokens(tokens, payload, 'hybrid_pro_admin_chat');
   }
 
-  private async sendToTokens(tokens: string[], payload: FcmPayload) {
-    if (!tokens.length) return;
+  private async sendToTokens(
+    tokens: string[],
+    payload: FcmPayload,
+    channelId: string,
+  ) {
+    const kind = payload.data.type || payload.data.noticeTitle || 'push';
+    if (!tokens.length) {
+      this.logger.warn(`FCM skip ${kind}: no registered device`);
+      return;
+    }
     if (!this.messaging) {
-      this.logger.debug(`FCM skip (${tokens.length} tokens): not configured`);
+      this.logger.warn(
+        `FCM skip ${kind} (${tokens.length} token(s)): set FIREBASE_SERVICE_ACCOUNT_JSON on the server`,
+      );
       return;
     }
 
@@ -81,31 +91,42 @@ export class FcmService implements OnModuleInit {
     for (const [key, value] of Object.entries(payload.data)) {
       data[key] = String(value ?? '');
     }
+    data.noticeTitle = data.noticeTitle || payload.title;
+    data.noticeBody = data.noticeBody || payload.body;
+    data.channelId = channelId;
 
     try {
+      // Data-only on Android so a killed app can still draw the Hybrid Pro
+      // mark. A notification payload would be drawn by the system with the
+      // launcher icon, which Android rejects, and the push never appears.
       const result = await this.messaging.sendEachForMulticast({
         tokens,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
         data,
         android: {
           priority: 'high',
-          notification: {
-            sound: 'default',
-            channelId: 'hybrid_pro_admin_chat',
-            defaultSound: true,
-          },
+          ttl: 24 * 60 * 60 * 1000,
         },
         apns: {
+          headers: {
+            'apns-priority': '10',
+            'apns-push-type': 'alert',
+          },
           payload: {
             aps: {
+              alert: {
+                title: payload.title,
+                body: payload.body,
+              },
               sound: 'default',
+              badge: 1,
             },
           },
         },
       });
+
+      this.logger.log(
+        `FCM ${kind}: ${result.successCount}/${tokens.length} delivered`,
+      );
 
       const stale: string[] = [];
       result.responses.forEach((response, index) => {

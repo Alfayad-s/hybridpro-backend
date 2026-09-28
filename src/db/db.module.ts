@@ -1,6 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { DEFAULT_TEMPLATES, NOTIFICATION_TYPES } from '../engagement/templates.js';
+import { DEFAULT_DAILY_LIMIT, DEFAULT_QUIET_END, DEFAULT_QUIET_START } from '../engagement/rules.js';
 import * as schema from './schema.js';
 
 export const DB = Symbol('DB');
@@ -192,6 +194,254 @@ export const DB = Symbol('DB');
           )
         `;
         await client`CREATE INDEX IF NOT EXISTS coach_messages_conv_created_idx ON coach_messages (conversation_id, created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS store_categories (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            slug text NOT NULL UNIQUE,
+            label text NOT NULL,
+            sort_order integer NOT NULL DEFAULT 0,
+            active boolean NOT NULL DEFAULT true,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS store_categories_slug_uidx ON store_categories (slug)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS store_kinds (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            slug text NOT NULL UNIQUE,
+            label text NOT NULL,
+            sort_order integer NOT NULL DEFAULT 0,
+            active boolean NOT NULL DEFAULT true,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS store_kinds_slug_uidx ON store_kinds (slug)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS store_products (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            slug text NOT NULL UNIQUE,
+            title text NOT NULL,
+            subtitle text NOT NULL DEFAULT '',
+            description text,
+            category text NOT NULL,
+            kind text NOT NULL DEFAULT 'merch',
+            price_label text NOT NULL,
+            price_paise integer,
+            image_url text,
+            sizes text,
+            plan_id text,
+            active boolean NOT NULL DEFAULT true,
+            sort_order integer NOT NULL DEFAULT 0,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS store_products_slug_uidx ON store_products (slug)`;
+        await client`CREATE INDEX IF NOT EXISTS store_products_category_idx ON store_products (category)`;
+        await client`CREATE INDEX IF NOT EXISTS store_products_active_idx ON store_products (active)`;
+        await client`ALTER TABLE store_products ADD COLUMN IF NOT EXISTS coin_price integer`;
+        await client`
+          CREATE TABLE IF NOT EXISTS user_rewards (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            level integer NOT NULL DEFAULT 1,
+            xp integer NOT NULL DEFAULT 0,
+            coins integer NOT NULL DEFAULT 0,
+            current_streak integer NOT NULL DEFAULT 0,
+            longest_streak integer NOT NULL DEFAULT 0,
+            last_completed_date text,
+            badges text NOT NULL DEFAULT '[]',
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS user_rewards_user_uidx ON user_rewards (user_id)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS daily_challenges (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            date text NOT NULL,
+            period text NOT NULL DEFAULT 'daily',
+            title text NOT NULL,
+            description text NOT NULL,
+            category text NOT NULL,
+            difficulty text NOT NULL,
+            target_value text NOT NULL,
+            current_value text NOT NULL DEFAULT '0',
+            unit text NOT NULL,
+            status text NOT NULL DEFAULT 'pending',
+            xp_reward integer NOT NULL,
+            coin_reward integer NOT NULL,
+            badge_reward text,
+            icon text,
+            color text,
+            auto_complete boolean NOT NULL DEFAULT false,
+            completed_at timestamp,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS daily_challenges_user_date_idx ON daily_challenges (user_id, date)`;
+        await client`CREATE INDEX IF NOT EXISTS daily_challenges_user_status_idx ON daily_challenges (user_id, status)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS challenge_history (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            challenge_id uuid REFERENCES daily_challenges(id) ON DELETE CASCADE NOT NULL,
+            completed_at timestamp DEFAULT now() NOT NULL,
+            xp_earned integer NOT NULL,
+            coins_earned integer NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS challenge_history_user_idx ON challenge_history (user_id, completed_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS coin_ledger (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            delta integer NOT NULL,
+            balance_after integer NOT NULL,
+            reason text NOT NULL,
+            ref_type text,
+            ref_id text,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS coin_ledger_user_idx ON coin_ledger (user_id, created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS coin_redemptions (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            product_id uuid REFERENCES store_products(id) ON DELETE RESTRICT NOT NULL,
+            coins_spent integer NOT NULL,
+            size text,
+            status text NOT NULL DEFAULT 'pending',
+            notes text,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS coin_redemptions_user_idx ON coin_redemptions (user_id, created_at)`;
+        await client`CREATE INDEX IF NOT EXISTS coin_redemptions_status_idx ON coin_redemptions (status)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS meal_library (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            name text NOT NULL,
+            type text NOT NULL DEFAULT 'lunch',
+            calories integer NOT NULL DEFAULT 0,
+            protein_g integer NOT NULL DEFAULT 0,
+            carbs_g integer NOT NULL DEFAULT 0,
+            fat_g integer NOT NULL DEFAULT 0,
+            notes text,
+            image_url text,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS meal_library_type_idx ON meal_library (type, name)`;
+        await client`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id text`;
+        await client`ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS last_active_at timestamp`;
+        await client`
+          CREATE TABLE IF NOT EXISTS member_routines (
+            user_id uuid PRIMARY KEY NOT NULL,
+            timezone text NOT NULL DEFAULT 'Asia/Kolkata',
+            wake_minutes integer,
+            gym_minutes integer,
+            breakfast_minutes integer,
+            lunch_minutes integer,
+            dinner_minutes integer,
+            sleep_minutes integer,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS engagement_preferences (
+            user_id uuid PRIMARY KEY NOT NULL,
+            workout boolean NOT NULL DEFAULT true,
+            meals boolean NOT NULL DEFAULT true,
+            hydration boolean NOT NULL DEFAULT true,
+            sleep boolean NOT NULL DEFAULT true,
+            motivation boolean NOT NULL DEFAULT true,
+            streak boolean NOT NULL DEFAULT true,
+            quiet_start_minutes integer,
+            quiet_end_minutes integer,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS engagement_settings (
+            id text PRIMARY KEY NOT NULL DEFAULT 'default',
+            daily_limit integer NOT NULL DEFAULT 6,
+            quiet_start_minutes integer NOT NULL DEFAULT 1350,
+            quiet_end_minutes integer NOT NULL DEFAULT 420,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          INSERT INTO engagement_settings (id, daily_limit, quiet_start_minutes, quiet_end_minutes)
+          VALUES ('default', ${DEFAULT_DAILY_LIMIT}, ${DEFAULT_QUIET_START}, ${DEFAULT_QUIET_END})
+          ON CONFLICT (id) DO NOTHING
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS notification_templates (
+            type text PRIMARY KEY NOT NULL,
+            title text NOT NULL,
+            body text NOT NULL,
+            deep_link text NOT NULL,
+            enabled boolean NOT NULL DEFAULT true,
+            priority text NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        for (const type of NOTIFICATION_TYPES) {
+          const template = DEFAULT_TEMPLATES[type];
+          await client`
+            INSERT INTO notification_templates (type, title, body, deep_link, enabled, priority)
+            VALUES (
+              ${template.type},
+              ${template.title},
+              ${template.body},
+              ${template.deepLink},
+              ${template.enabled},
+              ${template.priority}
+            )
+            ON CONFLICT (type) DO NOTHING
+          `;
+        }
+        await client`
+          CREATE TABLE IF NOT EXISTS notification_logs (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            type text NOT NULL,
+            local_date text NOT NULL,
+            occurrence integer NOT NULL DEFAULT 1,
+            result text NOT NULL DEFAULT 'SEND',
+            reason text NOT NULL,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          CREATE UNIQUE INDEX IF NOT EXISTS notification_logs_send_uidx
+          ON notification_logs (user_id, type, local_date, occurrence)
+        `;
+        await client`
+          CREATE INDEX IF NOT EXISTS notification_logs_user_day_idx
+          ON notification_logs (user_id, local_date)
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS engagement_events (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            type text NOT NULL,
+            local_date text,
+            payload text,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          CREATE INDEX IF NOT EXISTS engagement_events_user_idx
+          ON engagement_events (user_id, created_at)
+        `;
         return drizzle(client, { schema });
       },
     },

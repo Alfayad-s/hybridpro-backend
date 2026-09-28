@@ -70,8 +70,16 @@ export class ChatService {
     return { conversationId: conversation.id, messages };
   }
 
-  async sendMemberMessage(member: { userId: string; email: string }, body?: string) {
-    const text = this.normalizeBody(body);
+  async sendMemberMessage(
+    member: { userId: string; email: string },
+    input: { body?: string; imageUrl?: string },
+  ) {
+    const imageUrl = input.imageUrl?.trim() || null;
+    const text = this.normalizeBody(input.body, {
+      allowEmptyWithImage: Boolean(imageUrl),
+    });
+    if (!text && !imageUrl) throw new BadRequestException('Message required');
+
     const sub = await this.requireActiveLinkedSubscription(member);
     const conversation = await this.ensureConversation(sub.id, member.userId);
     const message = await this.insertMessage({
@@ -79,8 +87,8 @@ export class ChatService {
       senderRole: 'member',
       senderUserId: member.userId,
       senderCoachEmail: null,
-      body: text,
-      imageUrl: null,
+      body: text || (imageUrl ? ' ' : ''),
+      imageUrl,
     });
 
     const now = new Date(message.createdAt);
@@ -90,7 +98,7 @@ export class ChatService {
       .where(eq(coachConversations.id, conversation.id));
 
     const profileName = await this.profileName(member.userId);
-    const preview = this.preview(text);
+    const preview = this.preview(text || 'Photo');
     await this.fanout.toCoaches(
       'chat.message',
       {

@@ -9,6 +9,11 @@ type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
 export type DeviceRole = 'member' | 'coach';
 export type DevicePlatform = 'ios' | 'android';
 
+function normalizeDeviceId(deviceId?: string) {
+  const value = (deviceId || '').trim();
+  return value.length > 0 ? value.slice(0, 128) : null;
+}
+
 @Injectable()
 export class DeviceTokensService {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -25,9 +30,13 @@ export class DeviceTokensService {
     return value;
   }
 
-  async registerMember(userId: string, input: { token?: string; platform?: string }) {
+  async registerMember(
+    userId: string,
+    input: { token?: string; platform?: string; deviceId?: string },
+  ) {
     const token = this.normalizeToken(input.token);
     const platform = this.normalizePlatform(input.platform);
+    const deviceId = normalizeDeviceId(input.deviceId);
     const now = new Date();
 
     const [existing] = await this.db
@@ -44,6 +53,8 @@ export class DeviceTokensService {
           userId,
           coachEmail: null,
           platform,
+          deviceId: deviceId ?? existing.deviceId,
+          lastActiveAt: now,
           updatedAt: now,
         })
         .where(eq(deviceTokens.token, token))
@@ -59,6 +70,8 @@ export class DeviceTokensService {
         coachEmail: null,
         token,
         platform,
+        deviceId,
+        lastActiveAt: now,
         updatedAt: now,
       })
       .returning();
@@ -84,11 +97,12 @@ export class DeviceTokensService {
     return { ok: true as const };
   }
 
-  async registerCoach(coachEmail: string, input: { token?: string; platform?: string }) {
+  async registerCoach(coachEmail: string, input: { token?: string; platform?: string; deviceId?: string }) {
     const email = coachEmail.trim().toLowerCase();
     if (!email) throw new BadRequestException('Coach email required');
     const token = this.normalizeToken(input.token);
     const platform = this.normalizePlatform(input.platform);
+    const deviceId = normalizeDeviceId(input.deviceId);
     const now = new Date();
 
     const [existing] = await this.db
@@ -105,6 +119,8 @@ export class DeviceTokensService {
           userId: null,
           coachEmail: email,
           platform,
+          deviceId: deviceId ?? existing.deviceId,
+          lastActiveAt: now,
           updatedAt: now,
         })
         .where(eq(deviceTokens.token, token))
@@ -120,6 +136,8 @@ export class DeviceTokensService {
         coachEmail: email,
         token,
         platform,
+        deviceId,
+        lastActiveAt: now,
         updatedAt: now,
       })
       .returning();

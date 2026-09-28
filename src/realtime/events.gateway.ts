@@ -2,8 +2,10 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
   ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
@@ -21,6 +23,9 @@ export function memberRoom(userId: string) {
     origin: true,
     credentials: true,
   },
+  transports: ['websocket', 'polling'],
+  pingInterval: 20000,
+  pingTimeout: 25000,
 })
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(EventsGateway.name);
@@ -65,6 +70,47 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(@ConnectedSocket() client: Socket) {
     this.logger.debug(`Socket disconnected ${client.id}`);
+  }
+
+  /** Live typing indicator — WS only, no FCM. */
+  @SubscribeMessage('chat.typing')
+  handleTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    body: {
+      subscriptionId?: string;
+      isTyping?: boolean;
+      memberUserId?: string;
+    },
+  ) {
+    const role = client.data?.role as string | undefined;
+    const isTyping = Boolean(body?.isTyping);
+    const subscriptionId = String(body?.subscriptionId ?? '').trim();
+
+    if (role === 'member') {
+      const userId = String(client.data?.userId ?? '');
+      if (!userId) return;
+      this.emitToCoaches('chat.typing', {
+        type: 'chat.typing',
+        subscriptionId,
+        memberUserId: userId,
+        senderRole: 'member',
+        isTyping: isTyping ? '1' : '0',
+      });
+      return;
+    }
+
+    if (role === 'coach') {
+      const memberUserId = String(body?.memberUserId ?? '').trim();
+      if (!memberUserId) return;
+      this.emitToMember(memberUserId, 'chat.typing', {
+        type: 'chat.typing',
+        subscriptionId,
+        memberUserId,
+        senderRole: 'coach',
+        isTyping: isTyping ? '1' : '0',
+      });
+    }
   }
 
   emitToMember(userId: string, event: string, payload: Record<string, unknown>) {
