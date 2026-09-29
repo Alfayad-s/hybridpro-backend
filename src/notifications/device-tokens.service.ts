@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import { deviceTokens } from '../db/schema.js';
@@ -37,45 +37,15 @@ export class DeviceTokensService {
     const token = this.normalizeToken(input.token);
     const platform = this.normalizePlatform(input.platform);
     const deviceId = normalizeDeviceId(input.deviceId);
-    const now = new Date();
-
-    const [existing] = await this.db
-      .select()
-      .from(deviceTokens)
-      .where(eq(deviceTokens.token, token))
-      .limit(1);
-
-    if (existing) {
-      const [row] = await this.db
-        .update(deviceTokens)
-        .set({
-          role: 'member',
-          userId,
-          coachEmail: null,
-          platform,
-          deviceId: deviceId ?? existing.deviceId,
-          lastActiveAt: now,
-          updatedAt: now,
-        })
-        .where(eq(deviceTokens.token, token))
-        .returning();
-      return { ok: true as const, id: row?.id ?? existing.id };
-    }
-
-    const [row] = await this.db
-      .insert(deviceTokens)
-      .values({
-        role: 'member',
-        userId,
-        coachEmail: null,
-        token,
-        platform,
-        deviceId,
-        lastActiveAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    return { ok: true as const, id: row!.id };
+    const id = await this.upsertToken({
+      role: 'member',
+      userId,
+      coachEmail: null,
+      token,
+      platform,
+      deviceId,
+    });
+    return { ok: true as const, id };
   }
 
   async unregisterMember(userId: string, token?: string) {
@@ -103,45 +73,53 @@ export class DeviceTokensService {
     const token = this.normalizeToken(input.token);
     const platform = this.normalizePlatform(input.platform);
     const deviceId = normalizeDeviceId(input.deviceId);
+    const id = await this.upsertToken({
+      role: 'coach',
+      userId: null,
+      coachEmail: email,
+      token,
+      platform,
+      deviceId,
+    });
+    return { ok: true as const, id };
+  }
+
+  /** One row per FCM token. A second login updates it instead of failing. */
+  private async upsertToken(input: {
+    role: DeviceRole;
+    userId: string | null;
+    coachEmail: string | null;
+    token: string;
+    platform: DevicePlatform;
+    deviceId: string | null;
+  }) {
     const now = new Date();
-
-    const [existing] = await this.db
-      .select()
-      .from(deviceTokens)
-      .where(eq(deviceTokens.token, token))
-      .limit(1);
-
-    if (existing) {
-      const [row] = await this.db
-        .update(deviceTokens)
-        .set({
-          role: 'coach',
-          userId: null,
-          coachEmail: email,
-          platform,
-          deviceId: deviceId ?? existing.deviceId,
-          lastActiveAt: now,
-          updatedAt: now,
-        })
-        .where(eq(deviceTokens.token, token))
-        .returning();
-      return { ok: true as const, id: row?.id ?? existing.id };
-    }
-
     const [row] = await this.db
       .insert(deviceTokens)
       .values({
-        role: 'coach',
-        userId: null,
-        coachEmail: email,
-        token,
-        platform,
-        deviceId,
+        role: input.role,
+        userId: input.userId,
+        coachEmail: input.coachEmail,
+        token: input.token,
+        platform: input.platform,
+        deviceId: input.deviceId,
         lastActiveAt: now,
         updatedAt: now,
       })
-      .returning();
-    return { ok: true as const, id: row!.id };
+      .onConflictDoUpdate({
+        target: deviceTokens.token,
+        set: {
+          role: input.role,
+          userId: input.userId,
+          coachEmail: input.coachEmail,
+          platform: input.platform,
+          deviceId: input.deviceId ?? sql`${deviceTokens.deviceId}`,
+          lastActiveAt: now,
+          updatedAt: now,
+        },
+      })
+      .returning({ id: deviceTokens.id });
+    return row!.id;
   }
 
   async unregisterCoach(coachEmail: string, token?: string) {

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
@@ -28,19 +28,19 @@ export class FcmService implements OnModuleInit {
           this.logger.log('FCM initialized from FIREBASE_SERVICE_ACCOUNT_JSON');
         } else {
           const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
-          if (credPath) {
+          if (credPath && existsSync(credPath)) {
             const fileJson = readFileSync(credPath, 'utf8').trim();
             if (!fileJson) {
               this.logger.warn(
-                `FCM not configured — ${credPath} is empty. Paste the Firebase service account JSON into that file.`,
+                'FCM not configured — the credentials file is empty. Set FIREBASE_SERVICE_ACCOUNT_JSON on the server.',
               );
               return;
             }
             initializeApp({ credential: cert(JSON.parse(fileJson) as Record<string, string>) });
-            this.logger.log(`FCM initialized from ${credPath}`);
+            this.logger.log('FCM initialized from GOOGLE_APPLICATION_CREDENTIALS');
           } else {
             this.logger.warn(
-              'FCM not configured — push notifications disabled until credentials are set',
+              'FCM not configured — set FIREBASE_SERVICE_ACCOUNT_JSON on the server. Push is off until then.',
             );
             return;
           }
@@ -94,17 +94,28 @@ export class FcmService implements OnModuleInit {
     data.noticeTitle = data.noticeTitle || payload.title;
     data.noticeBody = data.noticeBody || payload.body;
     data.channelId = channelId;
+    // The system tray draws this when the app is backgrounded or swiped away.
+    // Clients skip their own copy when this flag is set.
+    data.systemTray = '1';
 
     try {
-      // Data-only on Android so a killed app can still draw the Hybrid Pro
-      // mark. A notification payload would be drawn by the system with the
-      // launcher icon, which Android rejects, and the push never appears.
       const result = await this.messaging.sendEachForMulticast({
         tokens,
         data,
+        notification: {
+          title: payload.title,
+          body: payload.body,
+        },
         android: {
           priority: 'high',
           ttl: 24 * 60 * 60 * 1000,
+          notification: {
+            channelId,
+            icon: 'ic_stat_hybrid',
+            color: '#A0D028',
+            sound: 'default',
+            defaultSound: true,
+          },
         },
         apns: {
           headers: {

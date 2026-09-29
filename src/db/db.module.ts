@@ -23,7 +23,22 @@ export const DB = Symbol('DB');
           prepare: false,
           ssl: 'require',
           max: 4,
+          connect_timeout: 10,
         });
+        // Bump when the statements below change. A matching stamp skips them on the next boot.
+        const schemaVersion = '20260929';
+        await client`
+          CREATE TABLE IF NOT EXISTS app_schema (
+            id integer PRIMARY KEY,
+            version text NOT NULL
+          )
+        `;
+        const stamped = await client<{ version: string }[]>`
+          SELECT version FROM app_schema WHERE id = 1
+        `;
+        if (stamped[0]?.version === schemaVersion) {
+          return drizzle(client, { schema });
+        }
         await client`
           CREATE TABLE IF NOT EXISTS subscription_events (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -441,6 +456,11 @@ export const DB = Symbol('DB');
         await client`
           CREATE INDEX IF NOT EXISTS engagement_events_user_idx
           ON engagement_events (user_id, created_at)
+        `;
+        await client`
+          INSERT INTO app_schema (id, version)
+          VALUES (1, ${schemaVersion})
+          ON CONFLICT (id) DO UPDATE SET version = ${schemaVersion}
         `;
         return drizzle(client, { schema });
       },
