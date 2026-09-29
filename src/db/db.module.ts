@@ -7,6 +7,25 @@ import * as schema from './schema.js';
 
 export const DB = Symbol('DB');
 
+/**
+ * Supabase's transaction pooler (port 6543) drops replies when postgres.js
+ * sends several queries on one connection at once. Requests then hang until
+ * the phone gives up. The session pooler (port 5432) on the same host keeps
+ * one server connection per client and answers every query.
+ */
+function sessionPoolerUrl(raw: string) {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.hostname.endsWith('.pooler.supabase.com') && parsed.port === '6543') {
+      parsed.port = '5432';
+      return parsed.toString();
+    }
+  } catch {
+    /* keep the original string if it is not a URL */
+  }
+  return raw;
+}
+
 @Global()
 @Module({
   providers: [
@@ -19,11 +38,13 @@ export const DB = Symbol('DB');
             'DATABASE_URL is missing. Copy it from Hybrid Pro Mobile App/.env.local into hybrid-pro-api/.env',
           );
         }
-        const client = postgres(url, {
+        const client = postgres(sessionPoolerUrl(url), {
           prepare: false,
           ssl: 'require',
           max: 4,
           connect_timeout: 10,
+          idle_timeout: 20,
+          max_lifetime: 60 * 10,
           onnotice: () => {},
         });
         // Bump when the statements below change. A matching stamp skips them on the next boot.
