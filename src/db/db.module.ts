@@ -24,6 +24,7 @@ export const DB = Symbol('DB');
           ssl: 'require',
           max: 4,
           connect_timeout: 10,
+          onnotice: () => {},
         });
         // Bump when the statements below change. A matching stamp skips them on the next boot.
         const schemaVersion = '20260929';
@@ -37,6 +38,19 @@ export const DB = Symbol('DB');
           SELECT version FROM app_schema WHERE id = 1
         `;
         if (stamped[0]?.version === schemaVersion) {
+          return drizzle(client, { schema });
+        }
+        // Production already has these tables. Replaying every CREATE on boot
+        // keeps the API from listening, so the app spinner waits.
+        const [existing] = await client<{ rel: string | null }[]>`
+          SELECT to_regclass('public.engagement_events') AS rel
+        `;
+        if (existing?.rel) {
+          await client`
+            INSERT INTO app_schema (id, version)
+            VALUES (1, ${schemaVersion})
+            ON CONFLICT (id) DO UPDATE SET version = ${schemaVersion}
+          `;
           return drizzle(client, { schema });
         }
         await client`
