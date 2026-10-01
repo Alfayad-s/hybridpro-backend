@@ -153,6 +153,50 @@ export const coachCheckins = pgTable(
   (t) => [index('coach_checkins_sub_idx').on(t.subscriptionId, t.createdAt)],
 );
 
+/** Weekly hours the coach can be booked. Minutes are from midnight in Asia/Kolkata. */
+export const coachAvailability = pgTable(
+  'coach_availability',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    weekday: integer('weekday').notNull(),
+    startMinute: integer('start_minute').notNull(),
+    endMinute: integer('end_minute').notNull(),
+  },
+  (t) => [index('coach_availability_weekday_idx').on(t.weekday)],
+);
+
+/** One-off ranges when the coach cannot be booked. */
+export const coachTimeOff = pgTable(
+  'coach_time_off',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    startsAt: timestamp('starts_at').notNull(),
+    endsAt: timestamp('ends_at').notNull(),
+  },
+  (t) => [index('coach_time_off_range_idx').on(t.startsAt, t.endsAt)],
+);
+
+export const sessionBookings = pgTable(
+  'session_bookings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id')
+      .references(() => subscriptions.id, { onDelete: 'cascade' })
+      .notNull(),
+    userId: uuid('user_id'),
+    email: text('email').notNull(),
+    startsAt: timestamp('starts_at').notNull(),
+    endsAt: timestamp('ends_at').notNull(),
+    status: text('status').default('booked').notNull(),
+    bookedBy: text('booked_by').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('session_bookings_sub_idx').on(t.subscriptionId, t.startsAt),
+    index('session_bookings_status_idx').on(t.status, t.startsAt),
+  ],
+);
+
 export const userAppSync = pgTable('user_app_sync', {
   userId: uuid('user_id').primaryKey().notNull(),
   payload: text('payload').notNull(),

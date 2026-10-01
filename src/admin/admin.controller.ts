@@ -34,6 +34,7 @@ import {
 } from '../workout/meal-library.service.js';
 import { EngagementService } from '../engagement/engagement.service.js';
 import { WorkoutService } from '../workout/workout.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
@@ -56,6 +57,7 @@ export class AdminController {
     private readonly store: StoreService,
     private readonly mealLibrary: MealLibraryService,
     private readonly engagement: EngagementService,
+    private readonly sessions: SessionsService,
   ) {}
 
   @Post('auth/login')
@@ -798,6 +800,50 @@ export class AdminController {
       submission: converted ?? submission,
       subscription: result.subscription,
     };
+  }
+
+  @Get('availability')
+  @UseGuards(CoachGuard)
+  availability() {
+    return this.sessions.getAvailability();
+  }
+
+  @Put('availability')
+  @UseGuards(CoachGuard)
+  saveAvailability(@Body() body: { windows?: unknown; timeOff?: unknown }) {
+    return this.sessions.replaceAvailability(body ?? {});
+  }
+
+  @Get('sessions/slots')
+  @UseGuards(CoachGuard)
+  sessionSlots() {
+    return this.sessions.openSlots();
+  }
+
+  @Get('sessions')
+  @UseGuards(CoachGuard)
+  listSessions(@Query('upcoming') upcoming?: string) {
+    return this.sessions.listBookings({
+      upcomingOnly: upcoming === '1' || upcoming === 'true',
+    });
+  }
+
+  @Get('clients/:id/sessions')
+  @UseGuards(CoachGuard)
+  clientSessions(@Param('id') id: string) {
+    return this.sessions.listBookings({ subscriptionId: id });
+  }
+
+  @Post('clients/:id/sessions')
+  @UseGuards(CoachGuard)
+  bookClient(@Param('id') id: string, @Body() body: { startsAt?: string }) {
+    return this.sessions.bookAsCoach(id, body?.startsAt);
+  }
+
+  @Post('sessions/:id/cancel')
+  @UseGuards(CoachGuard)
+  cancelSession(@Param('id') id: string) {
+    return this.sessions.cancelAsCoach(id);
   }
 
   @Get('engagement')

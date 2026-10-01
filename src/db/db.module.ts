@@ -48,7 +48,7 @@ function sessionPoolerUrl(raw: string) {
           onnotice: () => {},
         });
         // Bump when the statements below change. A matching stamp skips them on the next boot.
-        const schemaVersion = '20260929';
+        const schemaVersion = '20260930-sessions-2';
         await client`
           CREATE TABLE IF NOT EXISTS app_schema (
             id integer PRIMARY KEY,
@@ -58,6 +58,45 @@ function sessionPoolerUrl(raw: string) {
         const stamped = await client<{ version: string }[]>`
           SELECT version FROM app_schema WHERE id = 1
         `;
+        if (stamped[0]?.version !== schemaVersion) {
+          await client`
+            CREATE TABLE IF NOT EXISTS coach_availability (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              weekday integer NOT NULL,
+              start_minute integer NOT NULL,
+              end_minute integer NOT NULL
+            )
+          `;
+          await client`CREATE INDEX IF NOT EXISTS coach_availability_weekday_idx ON coach_availability (weekday)`;
+          await client`
+            CREATE TABLE IF NOT EXISTS coach_time_off (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              starts_at timestamp NOT NULL,
+              ends_at timestamp NOT NULL
+            )
+          `;
+          await client`CREATE INDEX IF NOT EXISTS coach_time_off_range_idx ON coach_time_off (starts_at, ends_at)`;
+          await client`
+            CREATE TABLE IF NOT EXISTS session_bookings (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              subscription_id uuid REFERENCES subscriptions(id) ON DELETE CASCADE NOT NULL,
+              user_id uuid,
+              email text NOT NULL,
+              starts_at timestamp NOT NULL,
+              ends_at timestamp NOT NULL,
+              status text NOT NULL DEFAULT 'booked',
+              booked_by text NOT NULL,
+              created_at timestamp DEFAULT now() NOT NULL
+            )
+          `;
+          await client`CREATE INDEX IF NOT EXISTS session_bookings_sub_idx ON session_bookings (subscription_id, starts_at)`;
+          await client`CREATE INDEX IF NOT EXISTS session_bookings_status_idx ON session_bookings (status, starts_at)`;
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS session_bookings_start_booked_uidx
+            ON session_bookings (starts_at)
+            WHERE status = 'booked'
+          `;
+        }
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
@@ -149,6 +188,43 @@ function sessionPoolerUrl(raw: string) {
           )
         `;
         await client`CREATE INDEX IF NOT EXISTS coach_checkins_sub_idx ON coach_checkins (subscription_id, created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS coach_availability (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            weekday integer NOT NULL,
+            start_minute integer NOT NULL,
+            end_minute integer NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS coach_availability_weekday_idx ON coach_availability (weekday)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS coach_time_off (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            starts_at timestamp NOT NULL,
+            ends_at timestamp NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS coach_time_off_range_idx ON coach_time_off (starts_at, ends_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS session_bookings (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            subscription_id uuid REFERENCES subscriptions(id) ON DELETE CASCADE NOT NULL,
+            user_id uuid,
+            email text NOT NULL,
+            starts_at timestamp NOT NULL,
+            ends_at timestamp NOT NULL,
+            status text NOT NULL DEFAULT 'booked',
+            booked_by text NOT NULL,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS session_bookings_sub_idx ON session_bookings (subscription_id, starts_at)`;
+        await client`CREATE INDEX IF NOT EXISTS session_bookings_status_idx ON session_bookings (status, starts_at)`;
+        await client`
+          CREATE UNIQUE INDEX IF NOT EXISTS session_bookings_start_booked_uidx
+          ON session_bookings (starts_at)
+          WHERE status = 'booked'
+        `;
         await client`
           CREATE TABLE IF NOT EXISTS exercise_categories (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

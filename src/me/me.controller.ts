@@ -35,6 +35,7 @@ import { WorkoutService } from '../workout/workout.service.js';
 import { EngagementService } from '../engagement/engagement.service.js';
 import { ChallengesService } from '../rewards/challenges.service.js';
 import { WalletService } from '../rewards/wallet.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 
 type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
 
@@ -67,6 +68,7 @@ export class MeController {
     private readonly wallet: WalletService,
     private readonly challenges: ChallengesService,
     private readonly engagement: EngagementService,
+    private readonly sessions: SessionsService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
@@ -528,6 +530,28 @@ export class MeController {
     @Body() body: { date?: string },
   ) {
     return this.challenges.refreshDaily(member.userId, body?.date);
+  }
+
+  @Get('sessions/slots')
+  sessionSlots() {
+    return this.sessions.openSlots();
+  }
+
+  @Get('sessions')
+  mySessions(@CurrentMember() member: MemberUser) {
+    return this.sessions.memberSessions(member);
+  }
+
+  @Post('sessions')
+  @HttpCode(200)
+  bookSession(@CurrentMember() member: MemberUser, @Body() body: { startsAt?: string }) {
+    return this.sessions.bookAsMember({ ...member, startsAt: body?.startsAt });
+  }
+
+  @Post('sessions/:id/cancel')
+  @HttpCode(200)
+  cancelSession(@CurrentMember() member: MemberUser, @Param('id') id: string) {
+    return this.sessions.cancelAsMember(id, member);
   }
 
   @Get('engagement/today')

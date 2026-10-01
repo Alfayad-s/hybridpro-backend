@@ -31,6 +31,7 @@ import { ExercisesService } from './workout/exercises.service.js';
 import { MealLibraryService } from './workout/meal-library.service.js';
 import { WorkoutService } from './workout/workout.service.js';
 import { EngagementScheduler } from './engagement/engagement.scheduler.js';
+import { SessionsService } from './sessions/sessions.service.js';
 import { EngagementService } from './engagement/engagement.service.js';
 import { ChallengesService } from './rewards/challenges.service.js';
 import { WalletService } from './rewards/wallet.service.js';
@@ -80,6 +81,7 @@ import { WalletService } from './rewards/wallet.service.js';
     ChallengesService,
     EngagementService,
     EngagementScheduler,
+    SessionsService,
     StoreService,
     InternalGuard,
     CoachGuard,
