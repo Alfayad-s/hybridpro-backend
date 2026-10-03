@@ -146,6 +146,7 @@ function sessionPoolerUrl(raw: string) {
             id uuid PRIMARY KEY NOT NULL,
             email text NOT NULL,
             google_sub text,
+            apple_sub text,
             full_name text,
             avatar_url text,
             created_at timestamp DEFAULT now() NOT NULL,
@@ -157,6 +158,8 @@ function sessionPoolerUrl(raw: string) {
         await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_email_lower_uidx ON member_accounts (lower(trim(email)))`;
         await client`DROP INDEX IF EXISTS member_accounts_google_sub_uidx`;
         await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_google_sub_uidx ON member_accounts (google_sub) WHERE google_sub IS NOT NULL`;
+        await client`ALTER TABLE member_accounts ADD COLUMN IF NOT EXISTS apple_sub text`;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_apple_sub_uidx ON member_accounts (apple_sub) WHERE apple_sub IS NOT NULL`;
         await client`UPDATE member_accounts SET email = lower(trim(email)) WHERE email <> lower(trim(email))`;
         await client`
           CREATE TABLE IF NOT EXISTS email_otps (

@@ -213,12 +213,23 @@ export class AdminController {
     } catch (error) {
       console.error('[assigned_water]', error);
     }
+    let progressPhotos: Array<Record<string, unknown>> = [];
+    try {
+      const photos = await this.workouts.listClientProgressPhotos(id);
+      progressPhotos = photos.map((photo) => ({
+        ...photo,
+        url: this.cloudinary.signProgressPhoto(photo.publicId),
+      }));
+    } catch (error) {
+      console.error('[progress_photos]', error);
+    }
     return {
       ...detail,
       ...desk,
       assignedPlans,
       assignedMealPlans,
       assignedWaterChallenges,
+      progressPhotos,
     };
   }
 

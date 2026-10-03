@@ -10,6 +10,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import { emailOtps, memberAccounts, profiles, subscriptions } from '../db/schema.js';
+import { verifyAppleIdentityToken } from './apple-identity.js';
 import { MailService } from './mail.service.js';
 
 type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
@@ -92,6 +93,38 @@ export class AuthService {
       googleSub,
       fullName: (google.name || '').trim() || null,
       avatarUrl: (google.picture || '').trim() || null,
+    });
+    return this.issueMemberSession(account);
+  }
+
+  /** Exchange a Sign in with Apple identity token for a Hybrid Pro member JWT. */
+  async loginWithAppleIdentityToken(identityToken: string, fullName?: string | null) {
+    const token = identityToken?.trim();
+    if (!token) throw new BadRequestException('identityToken is required');
+
+    let apple;
+    try {
+      apple = await verifyAppleIdentityToken(token);
+    } catch (error) {
+      throw new UnauthorizedException(
+        error instanceof Error ? error.message : 'Apple sign-in could not be verified',
+      );
+    }
+    if (apple.email && !apple.emailVerified) {
+      throw new UnauthorizedException('Apple email is not verified');
+    }
+
+    const email = apple.email || (await this.findAccountByAppleSub(apple.sub))?.email || '';
+    if (!email) {
+      throw new UnauthorizedException(
+        'Apple did not share an email. Remove Hybrid Pro from Settings → Apple ID → Sign in with Apple, then try again.',
+      );
+    }
+
+    const account = await this.upsertMemberAccount({
+      email,
+      appleSub: apple.sub,
+      fullName: fullName?.trim() || null,
     });
     return this.issueMemberSession(account);
   }
@@ -228,25 +261,30 @@ export class AuthService {
   private async upsertMemberAccount(input: {
     email: string;
     googleSub?: string | null;
+    appleSub?: string | null;
     fullName?: string | null;
     avatarUrl?: string | null;
   }) {
     const email = this.normalizeEmail(input.email);
     const googleSub = input.googleSub?.trim() || null;
+    const appleSub = input.appleSub?.trim() || null;
     const fullName = input.fullName?.trim() || null;
     const avatarUrl = input.avatarUrl?.trim() || null;
 
     const byGoogle = googleSub
       ? await this.findAccountByGoogleSub(googleSub)
       : undefined;
+    const byApple = appleSub ? await this.findAccountByAppleSub(appleSub) : undefined;
     const byEmail = await this.findAccountByEmail(email);
 
     let account: MemberAccountRow | undefined;
     if (byGoogle && byEmail && byGoogle.id !== byEmail.id) {
       // Same person, two rows — keep the email account and absorb Google row.
       account = await this.mergeMemberAccounts(byEmail, byGoogle);
+    } else if (byApple && byEmail && byApple.id !== byEmail.id) {
+      account = await this.mergeMemberAccounts(byEmail, byApple);
     } else {
-      account = byEmail || byGoogle;
+      account = byEmail || byGoogle || byApple;
     }
 
     const now = new Date();
@@ -256,6 +294,7 @@ export class AuthService {
         .set({
           email,
           googleSub: googleSub || account.googleSub,
+          appleSub: appleSub || account.appleSub,
           fullName: fullName || account.fullName,
           avatarUrl: avatarUrl || account.avatarUrl,
           updatedAt: now,
@@ -271,6 +310,7 @@ export class AuthService {
             id: randomUUID(),
             email,
             googleSub,
+            appleSub,
             fullName,
             avatarUrl,
             createdAt: now,
@@ -282,13 +322,15 @@ export class AuthService {
         // Race: another login created the email row — reuse it.
         const raced =
           (await this.findAccountByEmail(email)) ||
-          (googleSub ? await this.findAccountByGoogleSub(googleSub) : undefined);
+          (googleSub ? await this.findAccountByGoogleSub(googleSub) : undefined) ||
+          (appleSub ? await this.findAccountByAppleSub(appleSub) : undefined);
         if (!raced) throw new UnauthorizedException('Could not create account');
         const [updated] = await this.db
           .update(memberAccounts)
           .set({
             email,
             googleSub: googleSub || raced.googleSub,
+            appleSub: appleSub || raced.appleSub,
             fullName: fullName || raced.fullName,
             avatarUrl: avatarUrl || raced.avatarUrl,
             updatedAt: now,
@@ -321,6 +363,15 @@ export class AuthService {
     return row;
   }
 
+  private async findAccountByAppleSub(appleSub: string) {
+    const [row] = await this.db
+      .select()
+      .from(memberAccounts)
+      .where(eq(memberAccounts.appleSub, appleSub))
+      .limit(1);
+    return row;
+  }
+
   /** Fold `duplicate` into `keeper` so Google/OTP share one user id. */
   private async mergeMemberAccounts(
     keeper: MemberAccountRow,
@@ -333,6 +384,7 @@ export class AuthService {
       .update(memberAccounts)
       .set({
         googleSub: keeper.googleSub || duplicate.googleSub,
+        appleSub: keeper.appleSub || duplicate.appleSub,
         fullName: keeper.fullName || duplicate.fullName,
         avatarUrl: keeper.avatarUrl || duplicate.avatarUrl,
         email: this.normalizeEmail(keeper.email || duplicate.email),

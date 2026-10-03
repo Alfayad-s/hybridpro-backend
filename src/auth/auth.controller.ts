@@ -5,6 +5,11 @@ type GoogleBody = {
   idToken?: string;
 };
 
+type AppleBody = {
+  identityToken?: string;
+  fullName?: string;
+};
+
 type OtpSendBody = {
   email?: string;
 };
@@ -24,6 +29,13 @@ export class AuthController {
   @HttpCode(200)
   google(@Body() body: GoogleBody) {
     return this.auth.loginWithGoogleIdToken(body.idToken || '');
+  }
+
+  /** Member Sign in with Apple — verifies the identity token, returns Nest JWT. */
+  @Post('apple')
+  @HttpCode(200)
+  apple(@Body() body: AppleBody) {
+    return this.auth.loginWithAppleIdentityToken(body.identityToken || '', body.fullName);
   }
 
   /** Send a 6-digit email OTP (Resend). */

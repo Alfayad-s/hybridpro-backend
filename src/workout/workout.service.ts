@@ -231,7 +231,10 @@ function emptyPayload(): SyncPayload {
       plans: { data: [], updatedAt: EPOCH },
       history: { data: [], updatedAt: EPOCH },
       activeWorkout: { data: null, updatedAt: EPOCH },
-      progress: { data: { bodyWeightLog: [], goalWeight: null }, updatedAt: EPOCH },
+      progress: {
+        data: { bodyWeightLog: [], goalWeight: null, photoSets: [] },
+        updatedAt: EPOCH,
+      },
       meals: {
         data: { entries: [], waterLogs: [] },
         updatedAt: EPOCH,
@@ -315,6 +318,59 @@ export class WorkoutService {
     const dayLogs = waterLogs.filter((w) => w.date === date);
     const totalMl = dayLogs.reduce((sum, w) => sum + w.amountMl, 0);
     return { entry, date, totalMl, logs: dayLogs };
+  }
+
+  async listOwnProgressPhotos(userId: string): Promise<ProgressPhotoRecord[]> {
+    const payload = await this.readPayload(userId);
+    return readPhotoSets(payload.stores.progress?.data);
+  }
+
+  async listClientProgressPhotos(subscriptionId: string): Promise<ProgressPhotoRecord[]> {
+    const client = await this.requireLinkedClient(subscriptionId, false);
+    if (!client.userId) return [];
+    return this.listOwnProgressPhotos(client.userId);
+  }
+
+  /** Save a physique photo. Every capture is kept so the timeline can show the full history. */
+  async saveProgressPhoto(
+    userId: string,
+    input: { pose: string; day: string; takenAt: string; publicId: string; note?: string | null },
+  ): Promise<{ saved: ProgressPhotoRecord; replacedPublicId: string | null }> {
+    const pose = input.pose;
+    if (!PROGRESS_POSES.has(pose)) {
+      throw new BadRequestException('pose must be front, side, or back');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.day)) {
+      throw new BadRequestException('day must be YYYY-MM-DD');
+    }
+    const takenAt = Number.isNaN(Date.parse(input.takenAt))
+      ? new Date().toISOString()
+      : new Date(input.takenAt).toISOString();
+    const note = input.note?.trim().slice(0, 200) || null;
+
+    const payload = await this.readPayload(userId);
+    const slice = payload.stores.progress ?? {
+      data: { bodyWeightLog: [], goalWeight: null, photoSets: [] },
+      updatedAt: EPOCH,
+    };
+    const data: Record<string, unknown> =
+      slice.data && typeof slice.data === 'object'
+        ? { ...(slice.data as Record<string, unknown>) }
+        : { bodyWeightLog: [], goalWeight: null, photoSets: [] };
+    const existing = readPhotoSets(data);
+    const record: ProgressPhotoRecord = {
+      id: randomUUID(),
+      takenAt,
+      day: input.day,
+      pose: pose as ProgressPhotoRecord['pose'],
+      publicId: input.publicId,
+      note,
+    };
+    const photos = [record, ...existing].slice(0, 400);
+    data.photoSets = photos;
+    payload.stores.progress = { data, updatedAt: new Date().toISOString() };
+    await this.writePayload(userId, payload);
+    return { saved: record, replacedPublicId: null };
   }
 
   /** Today's (or dated) water log summary. */
@@ -1227,10 +1283,77 @@ function mergeSyncPayloads(existing: SyncPayload, incoming: SyncPayload): SyncPa
       stores.meals = mergeMealsSlices(left, right);
       continue;
     }
+    if (key === 'progress') {
+      stores.progress = mergeProgressSlices(left, right);
+      continue;
+    }
     stores[key] = sliceTime(right) > sliceTime(left) ? right : left;
   }
 
   return { version: 1, stores };
+}
+
+const PROGRESS_POSES = new Set(['front', 'side', 'back']);
+
+export type ProgressPhotoRecord = {
+  id: string;
+  takenAt: string;
+  day: string;
+  pose: 'front' | 'side' | 'back';
+  publicId: string;
+  note: string | null;
+};
+
+function readPhotoSets(data: unknown): ProgressPhotoRecord[] {
+  if (!data || typeof data !== 'object') return [];
+  const raw = (data as { photoSets?: unknown }).photoSets;
+  if (!Array.isArray(raw)) return [];
+  const photos: ProgressPhotoRecord[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const pose = row.pose;
+    const publicId = typeof row.publicId === 'string' ? row.publicId : '';
+    const day = typeof row.day === 'string' ? row.day : '';
+    if (!PROGRESS_POSES.has(String(pose)) || !publicId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      continue;
+    }
+    photos.push({
+      id: typeof row.id === 'string' && row.id ? row.id : publicId,
+      takenAt: typeof row.takenAt === 'string' ? row.takenAt : day,
+      day,
+      pose: pose as ProgressPhotoRecord['pose'],
+      publicId,
+      note: typeof row.note === 'string' ? row.note : null,
+    });
+  }
+  return photos;
+}
+
+function mergePhotoSets(left: ProgressPhotoRecord[], right: ProgressPhotoRecord[]) {
+  const byKey = new Map<string, ProgressPhotoRecord>();
+  for (const photo of [...left, ...right]) {
+    const key = photo.id || photo.publicId;
+    const prev = byKey.get(key);
+    if (!prev || photo.takenAt >= prev.takenAt) byKey.set(key, photo);
+  }
+  return [...byKey.values()]
+    .sort((a, b) => b.takenAt.localeCompare(a.takenAt))
+    .slice(0, 400);
+}
+
+function mergeProgressSlices(
+  left: { data: unknown; updatedAt: string },
+  right: { data: unknown; updatedAt: string },
+) {
+  const newer = sliceTime(right) > sliceTime(left) ? right : left;
+  const older = newer === right ? left : right;
+  const base =
+    newer.data && typeof newer.data === 'object'
+      ? { ...(newer.data as Record<string, unknown>) }
+      : {};
+  base.photoSets = mergePhotoSets(readPhotoSets(older.data), readPhotoSets(newer.data));
+  return { data: base, updatedAt: newer.updatedAt };
 }
 
 type WaterLogRow = {

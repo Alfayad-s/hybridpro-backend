@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AdminController } from './admin/admin.controller.js';
+import { AccountDeletionService } from './auth/account-deletion.service.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
 import { MailService } from './auth/mail.service.js';
@@ -21,6 +22,8 @@ import { CloudinaryService } from './media/cloudinary.service.js';
 import { DeviceTokensService } from './notifications/device-tokens.service.js';
 import { FcmService } from './notifications/fcm.service.js';
 import { PaymentsController } from './payments/payments.controller.js';
+import { AppStoreBillingService } from './payments/app-store-billing.service.js';
+import { PlayBillingService } from './payments/play-billing.service.js';
 import { EventsGateway } from './realtime/events.gateway.js';
 import { RealtimeFanoutService } from './realtime/realtime-fanout.service.js';
 import { StoreService } from './store/store.service.js';
@@ -69,7 +72,10 @@ import { WalletService } from './rewards/wallet.service.js';
     WorkoutService,
     ContactService,
     AuthService,
+    AccountDeletionService,
     MailService,
+    PlayBillingService,
+    AppStoreBillingService,
     CloudinaryService,
     DeviceTokensService,
     FcmService,

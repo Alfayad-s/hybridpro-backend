@@ -131,4 +131,55 @@ export class CloudinaryService {
       throw new BadRequestException('Failed to upload product image');
     }
   }
+
+  async uploadProgressPhoto(params: {
+    memberUserId: string;
+    buffer: Buffer;
+    pose: string;
+    day: string;
+  }): Promise<{ publicId: string }> {
+    const safeId = params.memberUserId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48) || 'member';
+    const folder = `gymtrack/progress/member-${safeId}`;
+    const publicId = `${params.pose}-${params.day}-${Date.now().toString(36)}`;
+
+    try {
+      const result = await this.uploadBuffer(params.buffer, {
+        folder,
+        public_id: publicId,
+        overwrite: false,
+        resource_type: 'image',
+        type: 'authenticated',
+        transformation: [{ width: 1600, height: 2000, crop: 'limit', quality: 'auto' }],
+      });
+      return { publicId: result.public_id };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      console.error('[cloudinary.progress]', error);
+      throw new BadRequestException('Failed to upload progress photo');
+    }
+  }
+
+  signProgressPhoto(publicId: string): string {
+    this.ensureConfigured();
+    return cloudinary.url(publicId, {
+      type: 'authenticated',
+      sign_url: true,
+      secure: true,
+      resource_type: 'image',
+      expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
+    });
+  }
+
+  async destroyProgressPhoto(publicId: string): Promise<void> {
+    this.ensureConfigured();
+    try {
+      await cloudinary.uploader.destroy(publicId, {
+        type: 'authenticated',
+        resource_type: 'image',
+        invalidate: true,
+      });
+    } catch (error) {
+      console.error('[cloudinary.progress.destroy]', error);
+    }
+  }
 }

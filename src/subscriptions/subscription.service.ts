@@ -574,6 +574,8 @@ export class SubscriptionService {
     userId?: string | null;
     paymentStatus?: 'paid' | 'granted';
     eventAction?: SubscriptionEventAction;
+    /** When set, this expiry is the source of truth instead of a fixed 30-day grant. */
+    accessExpiresAt?: Date | null;
   }) {
     if (!isPricingPlanId(input.planId)) throw new Error('Invalid plan');
 
@@ -599,6 +601,24 @@ export class SubscriptionService {
           )[0]
         : await this.findLatestForIdentity({ email, userId: input.userId });
       if (existingSub) {
+        const override = this.asDate(input.accessExpiresAt ?? null);
+        const currentExpiry = this.asDate(existingSub.expiresAt);
+        if (override && (!currentExpiry || override.getTime() > currentExpiry.getTime())) {
+          const [updated] = await this.db
+            .update(subscriptions)
+            .set({
+              status: 'active',
+              expiresAt: override,
+              planId: input.planId,
+              userId: input.userId || existingSub.userId,
+            })
+            .where(eq(subscriptions.id, existingSub.id))
+            .returning();
+          return {
+            alreadyProcessed: true as const,
+            subscription: this.toPublic(await this.expireIfNeeded(updated ?? existingSub)),
+          };
+        }
         return {
           alreadyProcessed: true as const,
           subscription: this.toPublic(await this.expireIfNeeded(existingSub)),
@@ -613,8 +633,9 @@ export class SubscriptionService {
     const currentActive =
       current?.status === 'active' && current.expiresAt && current.expiresAt.getTime() > now.getTime();
 
+    const accessExpiresAt = this.asDate(input.accessExpiresAt ?? null);
     let startsAt = now;
-    let expiresAt = this.addDays(now, ACCESS_DAYS);
+    let expiresAt = accessExpiresAt ?? this.addDays(now, ACCESS_DAYS);
     let planId: PricingPlanId = input.planId;
     let nextPlanId: string | null = current?.nextPlanId ?? null;
 
@@ -622,19 +643,22 @@ export class SubscriptionService {
       if (incomingRank > currentRank) {
         planId = input.planId;
         startsAt = now;
-        expiresAt = this.addDays(now, ACCESS_DAYS);
+        expiresAt = accessExpiresAt ?? this.addDays(now, ACCESS_DAYS);
         nextPlanId = null;
       } else if (incomingRank === currentRank) {
         planId = current.planId as PricingPlanId;
         startsAt = current.startsAt ?? now;
-        expiresAt = this.addDays(
+        const extended = this.addDays(
           current.expiresAt && current.expiresAt > now ? current.expiresAt : now,
           ACCESS_DAYS,
         );
+        expiresAt = accessExpiresAt
+          ? new Date(Math.max(current.expiresAt?.getTime() ?? 0, accessExpiresAt.getTime()))
+          : extended;
       } else {
         planId = current.planId as PricingPlanId;
         startsAt = current.startsAt ?? now;
-        expiresAt = current.expiresAt ?? this.addDays(now, ACCESS_DAYS);
+        expiresAt = current.expiresAt ?? accessExpiresAt ?? this.addDays(now, ACCESS_DAYS);
         nextPlanId = input.planId;
       }
     }

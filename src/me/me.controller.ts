@@ -19,9 +19,14 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { memoryStorage } from 'multer';
+import { createHash } from 'crypto';
+import { AccountDeletionService } from '../auth/account-deletion.service.js';
 import { CurrentMember } from '../auth/member.decorator.js';
 import { MemberGuard } from '../auth/member.guard.js';
 import type { MemberUser } from '../auth/member.types.js';
+import { AppStoreBillingService } from '../payments/app-store-billing.service.js';
+import { PlayBillingService } from '../payments/play-billing.service.js';
+import { getPricingPlan } from '../plans.js';
 import { DB } from '../db/db.module.js';
 import { profiles } from '../db/schema.js';
 import { GymAttendanceService } from '../gym/gym-attendance.service.js';
@@ -51,7 +56,9 @@ type UpdateMeBody = {
 };
 
 const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const PROGRESS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const CHAT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const PROGRESS_POSES = new Set(['front', 'side', 'back']);
 
 @Controller('me')
 @UseGuards(MemberGuard)
@@ -69,6 +76,9 @@ export class MeController {
     private readonly challenges: ChallengesService,
     private readonly engagement: EngagementService,
     private readonly sessions: SessionsService,
+    private readonly playBilling: PlayBillingService,
+    private readonly appStoreBilling: AppStoreBillingService,
+    private readonly accountDeletion: AccountDeletionService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
@@ -236,6 +246,119 @@ export class MeController {
       userId: member.userId,
     });
     return { ...result, ...plan };
+  }
+
+  /** Unlock a coaching plan bought with Google Play Billing. */
+  @Post('subscription/play')
+  @HttpCode(200)
+  async confirmPlayPurchase(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { productId?: string; purchaseToken?: string },
+  ) {
+    if (!member.email) throw new BadRequestException('email_required');
+    const productId = body.productId?.trim() || '';
+    const purchaseToken = body.purchaseToken?.trim() || '';
+    if (!productId || !purchaseToken) {
+      throw new BadRequestException('productId and purchaseToken are required');
+    }
+    let verified;
+    try {
+      verified = await this.playBilling.verifySubscription(purchaseToken, productId);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Could not verify this purchase',
+      );
+    }
+    const plan = getPricingPlan(verified.planId);
+    if (!plan) throw new BadRequestException('Unknown plan');
+    const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
+    try {
+      await this.subscriptions.activateSubscription({
+        pineOrderId: `gplay:${tokenHash}`,
+        merchantOrderReference: `gplay-${tokenHash.slice(0, 24)}`,
+        email: member.email,
+        planId: plan.id,
+        amountPaise: plan.amountPaise,
+        userId: member.userId,
+        accessExpiresAt: verified.expiresAt,
+      });
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Could not unlock this plan',
+      );
+    }
+    if (verified.acknowledgementState === 'ACKNOWLEDGEMENT_STATE_PENDING') {
+      try {
+        await this.playBilling.acknowledge(purchaseToken, verified.productId);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : 'Could not acknowledge this purchase',
+        );
+      }
+    }
+    return this.subscriptions.getPlanForIdentity({
+      email: member.email,
+      userId: member.userId,
+    });
+  }
+
+  /** Unlock a coaching plan bought with an App Store subscription. */
+  @Post('subscription/apple')
+  @HttpCode(200)
+  async confirmApplePurchase(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { signedTransaction?: string },
+  ) {
+    if (!member.email) throw new BadRequestException('email_required');
+    const signedTransaction = body.signedTransaction?.trim() || '';
+    if (!signedTransaction) {
+      throw new BadRequestException('signedTransaction is required');
+    }
+    let verified;
+    try {
+      verified = this.appStoreBilling.verifySubscription(signedTransaction);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Could not verify this purchase',
+      );
+    }
+    const plan = getPricingPlan(verified.planId);
+    if (!plan) throw new BadRequestException('Unknown plan');
+    try {
+      await this.subscriptions.activateSubscription({
+        pineOrderId: `apple:${verified.transactionId}`,
+        merchantOrderReference: `apple-${verified.transactionId}`.slice(0, 64),
+        email: member.email,
+        planId: plan.id,
+        amountPaise: plan.amountPaise,
+        userId: member.userId,
+        accessExpiresAt: verified.expiresAt,
+      });
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Could not unlock this plan',
+      );
+    }
+    return this.subscriptions.getPlanForIdentity({
+      email: member.email,
+      userId: member.userId,
+    });
+  }
+
+  @Delete()
+  @HttpCode(200)
+  async deleteAccount(@CurrentMember() member: MemberUser) {
+    if (!member.email) throw new BadRequestException('email_required');
+    try {
+      return await this.accountDeletion.deleteMember({
+        userId: member.userId,
+        email: member.email,
+      });
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Could not delete this account',
+      );
+    }
   }
 
   @Get('assessment')
@@ -450,6 +573,68 @@ export class MeController {
   @HttpCode(200)
   markChatRead(@CurrentMember() member: MemberUser) {
     return this.chat.markMemberRead(member);
+  }
+
+  @Get('progress/photos')
+  async listProgressPhotos(@CurrentMember() member: MemberUser) {
+    const photos = await this.workouts.listOwnProgressPhotos(member.userId);
+    return {
+      photos: photos.map((photo) => ({
+        ...photo,
+        url: this.cloudinary.signProgressPhoto(photo.publicId),
+      })),
+    };
+  }
+
+  @Post('progress/photos')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: PROGRESS_IMAGE_MAX_BYTES },
+    }),
+  )
+  async uploadProgressPhoto(
+    @CurrentMember() member: MemberUser,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: { pose?: string; day?: string; takenAt?: string; note?: string },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required');
+    }
+    if (!CHAT_IMAGE_TYPES.has(file.mimetype) || file.mimetype === 'image/gif') {
+      throw new BadRequestException('Use a JPG, PNG, or WEBP image');
+    }
+    if (file.size > PROGRESS_IMAGE_MAX_BYTES) {
+      throw new BadRequestException('Image must be under 8MB');
+    }
+    const pose = (body?.pose ?? '').trim();
+    if (!PROGRESS_POSES.has(pose)) {
+      throw new BadRequestException('pose must be front, side, or back');
+    }
+    const day = (body?.day ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new BadRequestException('day must be YYYY-MM-DD');
+    }
+    const uploaded = await this.cloudinary.uploadProgressPhoto({
+      memberUserId: member.userId,
+      buffer: file.buffer,
+      pose,
+      day,
+    });
+    const { saved, replacedPublicId } = await this.workouts.saveProgressPhoto(member.userId, {
+      pose,
+      day,
+      takenAt: body?.takenAt || new Date().toISOString(),
+      publicId: uploaded.publicId,
+      note: body?.note,
+    });
+    if (replacedPublicId) {
+      await this.cloudinary.destroyProgressPhoto(replacedPublicId);
+    }
+    return {
+      photo: { ...saved, url: this.cloudinary.signProgressPhoto(saved.publicId) },
+    };
   }
 
   @Get('water')

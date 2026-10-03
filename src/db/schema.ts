@@ -17,6 +17,7 @@ export const memberAccounts = pgTable(
     id: uuid('id').primaryKey().notNull(),
     email: text('email').notNull(),
     googleSub: text('google_sub'),
+    appleSub: text('apple_sub'),
     fullName: text('full_name'),
     avatarUrl: text('avatar_url'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -30,6 +31,7 @@ export const memberAccounts = pgTable(
     // (lower(trim(email))); drizzle keeps a nominal unique on email.
     uniqueIndex('member_accounts_email_lower_uidx').on(t.email),
     uniqueIndex('member_accounts_google_sub_uidx').on(t.googleSub),
+    uniqueIndex('member_accounts_apple_sub_uidx').on(t.appleSub),
   ],
 );
 
