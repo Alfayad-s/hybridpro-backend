@@ -97,6 +97,15 @@ function sessionPoolerUrl(raw: string) {
             WHERE status = 'booked'
           `;
         }
+        // Existing databases return before the full bootstrap below, so new
+        // columns on member_accounts have to be applied here or login queries fail.
+        const [memberTable] = await client<{ rel: string | null }[]>`
+          SELECT to_regclass('public.member_accounts') AS rel
+        `;
+        if (memberTable?.rel) {
+          await client`ALTER TABLE member_accounts ADD COLUMN IF NOT EXISTS apple_sub text`;
+          await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_apple_sub_uidx ON member_accounts (apple_sub) WHERE apple_sub IS NOT NULL`;
+        }
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
