@@ -333,6 +333,25 @@ function sessionPoolerUrl(raw: string) {
         `;
         await client`CREATE INDEX IF NOT EXISTS coach_messages_conv_created_idx ON coach_messages (conversation_id, created_at)`;
         await client`
+          CREATE TABLE IF NOT EXISTS hyrox_messages (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            sender_role text NOT NULL,
+            sender_user_id uuid,
+            sender_name text NOT NULL,
+            sender_coach_email text,
+            body text NOT NULL,
+            image_url text,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS hyrox_messages_created_idx ON hyrox_messages (created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS hyrox_reads (
+            user_id text PRIMARY KEY,
+            last_read_at timestamp NOT NULL
+          )
+        `;
+        await client`
           CREATE TABLE IF NOT EXISTS store_categories (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             slug text NOT NULL UNIQUE,

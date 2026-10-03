@@ -51,6 +51,7 @@ export class ChatService {
 
   async getMemberThread(member: { userId: string; email: string }, limit = DEFAULT_LIMIT) {
     const sub = await this.requireActiveLinkedSubscription(member);
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, member.userId);
     const messages = await this.listMessages(conversation.id, { limit });
     const unread = await this.countUnreadForMember(conversation);
@@ -65,6 +66,7 @@ export class ChatService {
     opts: { before?: string; limit?: number },
   ) {
     const sub = await this.requireActiveLinkedSubscription(member);
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, member.userId);
     const messages = await this.listMessages(conversation.id, opts);
     return { conversationId: conversation.id, messages };
@@ -81,6 +83,7 @@ export class ChatService {
     if (!text && !imageUrl) throw new BadRequestException('Message required');
 
     const sub = await this.requireActiveLinkedSubscription(member);
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, member.userId);
     const message = await this.insertMessage({
       conversationId: conversation.id,
@@ -126,6 +129,7 @@ export class ChatService {
 
   async markMemberRead(member: { userId: string; email: string }) {
     const sub = await this.requireActiveLinkedSubscription(member);
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, member.userId);
     const now = new Date();
     await this.db
@@ -182,6 +186,7 @@ export class ChatService {
     if (!sub.userId) {
       throw new BadRequestException('Client has not signed into the app yet');
     }
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, sub.userId);
     const messages = await this.listMessages(conversation.id, { limit });
     const unread = await this.countUnreadForCoach(conversation);
@@ -199,6 +204,7 @@ export class ChatService {
     if (!sub.userId) {
       throw new BadRequestException('Client has not signed into the app yet');
     }
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, sub.userId);
     const messages = await this.listMessages(conversation.id, opts);
     return { conversationId: conversation.id, messages };
@@ -217,6 +223,7 @@ export class ChatService {
     if (!sub.userId) {
       throw new BadRequestException('Client has not signed into the app yet');
     }
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, sub.userId);
     const message = await this.insertMessage({
       conversationId: conversation.id,
@@ -263,6 +270,7 @@ export class ChatService {
     if (!sub.userId) {
       throw new BadRequestException('Client has not signed into the app yet');
     }
+    this.assertPrivateChat(sub);
     const conversation = await this.ensureConversation(sub.id, sub.userId);
     const now = new Date();
     await this.db
@@ -420,6 +428,12 @@ export class ChatService {
         ),
       );
     return Number(countRow?.count ?? 0);
+  }
+
+  private assertPrivateChat(sub: { planId: string }) {
+    if (sub.planId === 'hyrox') {
+      throw new BadRequestException('Hyrox members use the group room');
+    }
   }
 
   private async requireActiveLinkedSubscription(member: {

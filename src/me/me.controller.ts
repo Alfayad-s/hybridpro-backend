@@ -31,6 +31,7 @@ import { DB } from '../db/db.module.js';
 import { profiles } from '../db/schema.js';
 import { GymAttendanceService } from '../gym/gym-attendance.service.js';
 import { ChatService } from '../chat/chat.service.js';
+import { HyroxChatService } from '../chat/hyrox-chat.service.js';
 import { CloudinaryService } from '../media/cloudinary.service.js';
 import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
@@ -70,6 +71,7 @@ export class MeController {
     private readonly devices: DeviceTokensService,
     private readonly gym: GymAttendanceService,
     private readonly chat: ChatService,
+    private readonly hyroxChat: HyroxChatService,
     private readonly cloudinary: CloudinaryService,
     private readonly store: StoreService,
     private readonly wallet: WalletService,
@@ -507,6 +509,32 @@ export class MeController {
     @Query('category') category?: string,
   ) {
     return this.store.listMember(q, category);
+  }
+
+  @Get('hyrox/chat')
+  hyroxThread(
+    @CurrentMember() member: MemberUser,
+    @Query('limit') limit?: string,
+  ) {
+    return this.hyroxChat.getMemberThread(member, limit ? Number(limit) : undefined);
+  }
+
+  @Post('hyrox/chat/messages')
+  @HttpCode(200)
+  sendHyroxMessage(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { body?: string; imageUrl?: string },
+  ) {
+    return this.hyroxChat.sendMemberMessage(member, {
+      body: body?.body,
+      imageUrl: body?.imageUrl,
+    });
+  }
+
+  @Post('hyrox/chat/read')
+  @HttpCode(200)
+  markHyroxRead(@CurrentMember() member: MemberUser) {
+    return this.hyroxChat.markMemberRead(member);
   }
 
   @Get('chat')

@@ -16,6 +16,7 @@ import { ContactService } from './contact/contact.service.js';
 import { DbModule } from './db/db.module.js';
 import { GymAttendanceService } from './gym/gym-attendance.service.js';
 import { ChatService } from './chat/chat.service.js';
+import { HyroxChatService } from './chat/hyrox-chat.service.js';
 import { HealthController } from './health.controller.js';
 import { MeController } from './me/me.controller.js';
 import { CloudinaryService } from './media/cloudinary.service.js';
@@ -83,6 +84,7 @@ import { WalletService } from './rewards/wallet.service.js';
     RealtimeFanoutService,
     GymAttendanceService,
     ChatService,
+    HyroxChatService,
     WalletService,
     ChallengesService,
     EngagementService,

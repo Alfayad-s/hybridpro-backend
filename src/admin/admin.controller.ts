@@ -23,6 +23,7 @@ import { CoachingService } from '../coaching/coaching.service.js';
 import { ContactService } from '../contact/contact.service.js';
 import { GymAttendanceService } from '../gym/gym-attendance.service.js';
 import { ChatService } from '../chat/chat.service.js';
+import { HyroxChatService } from '../chat/hyrox-chat.service.js';
 import { CloudinaryService } from '../media/cloudinary.service.js';
 import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { SubscriptionService } from '../subscriptions/subscription.service.js';
@@ -54,6 +55,7 @@ export class AdminController {
     private readonly devices: DeviceTokensService,
     private readonly gym: GymAttendanceService,
     private readonly chat: ChatService,
+    private readonly hyroxChat: HyroxChatService,
     private readonly store: StoreService,
     private readonly mealLibrary: MealLibraryService,
     private readonly engagement: EngagementService,
@@ -99,6 +101,27 @@ export class AdminController {
   @UseGuards(CoachGuard)
   chatInbox() {
     return this.chat.inbox();
+  }
+
+  @Get('hyrox/chat')
+  @UseGuards(CoachGuard)
+  hyroxGroup(@Query('limit') limit?: string) {
+    return this.hyroxChat.getCoachThread(limit ? Number(limit) : undefined);
+  }
+
+  @Post('hyrox/chat/messages')
+  @UseGuards(CoachGuard)
+  sendHyroxChat(
+    @Headers('x-coach-email') coachEmail: string,
+    @Body() body: { body?: string; imageUrl?: string },
+  ) {
+    return this.hyroxChat.sendCoachMessage(coachEmail || '', body);
+  }
+
+  @Post('hyrox/chat/read')
+  @UseGuards(CoachGuard)
+  markHyroxChatRead() {
+    return this.hyroxChat.markCoachRead();
   }
 
   @Get('clients/:id/chat')

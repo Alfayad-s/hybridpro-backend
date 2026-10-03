@@ -329,6 +329,27 @@ export const coachMessages = pgTable(
   (t) => [index('coach_messages_conv_created_idx').on(t.conversationId, t.createdAt)],
 );
 
+/** One shared Hyrox room. Messages are not tied to a private coach conversation. */
+export const hyroxMessages = pgTable(
+  'hyrox_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    senderRole: text('sender_role').notNull(),
+    senderUserId: uuid('sender_user_id'),
+    senderName: text('sender_name').notNull(),
+    senderCoachEmail: text('sender_coach_email'),
+    body: text('body').notNull(),
+    imageUrl: text('image_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('hyrox_messages_created_idx').on(t.createdAt)],
+);
+
+export const hyroxReads = pgTable('hyrox_reads', {
+  userId: text('user_id').primaryKey().notNull(),
+  lastReadAt: timestamp('last_read_at').notNull(),
+});
+
 /** Hybrid Pro store catalog (plans + merch). */
 export const storeCategories = pgTable(
   'store_categories',

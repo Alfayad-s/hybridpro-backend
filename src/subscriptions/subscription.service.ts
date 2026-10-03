@@ -4,6 +4,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import { payments, profiles, subscriptionEvents, subscriptions } from '../db/schema.js';
 import {
+  accessDaysForPlan,
   getPricingPlan,
   isPricingPlanId,
   planRank,
@@ -236,7 +237,7 @@ export class SubscriptionService {
           nextPlanId: null,
           status: 'active',
           startsAt,
-          expiresAt: this.addDays(startsAt, ACCESS_DAYS),
+          expiresAt: this.addDays(startsAt, accessDaysForPlan(row.nextPlanId)),
         })
         .where(eq(subscriptions.id, row.id))
         .returning();
@@ -634,23 +635,26 @@ export class SubscriptionService {
       current?.status === 'active' && current.expiresAt && current.expiresAt.getTime() > now.getTime();
 
     const accessExpiresAt = this.asDate(input.accessExpiresAt ?? null);
+    const grantDays = accessDaysForPlan(input.planId);
     let startsAt = now;
-    let expiresAt = accessExpiresAt ?? this.addDays(now, ACCESS_DAYS);
+    let expiresAt = accessExpiresAt ?? this.addDays(now, grantDays);
     let planId: PricingPlanId = input.planId;
     let nextPlanId: string | null = current?.nextPlanId ?? null;
 
-    if (currentActive && current) {
+    const hyroxSwitch =
+      current != null && (input.planId === 'hyrox') !== (current.planId === 'hyrox');
+    if (currentActive && current && !hyroxSwitch) {
       if (incomingRank > currentRank) {
         planId = input.planId;
         startsAt = now;
-        expiresAt = accessExpiresAt ?? this.addDays(now, ACCESS_DAYS);
+        expiresAt = accessExpiresAt ?? this.addDays(now, grantDays);
         nextPlanId = null;
       } else if (incomingRank === currentRank) {
         planId = current.planId as PricingPlanId;
         startsAt = current.startsAt ?? now;
         const extended = this.addDays(
           current.expiresAt && current.expiresAt > now ? current.expiresAt : now,
-          ACCESS_DAYS,
+          accessDaysForPlan(planId),
         );
         expiresAt = accessExpiresAt
           ? new Date(Math.max(current.expiresAt?.getTime() ?? 0, accessExpiresAt.getTime()))
