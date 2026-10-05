@@ -437,6 +437,32 @@ export const shopPromos = pgTable(
   ],
 );
 
+/** Website shop checkout. pending until the success page confirms payment. */
+export const shopOrders = pgTable(
+  'shop_orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reference: text('reference').notNull(),
+    pineOrderId: text('pine_order_id').notNull().default(''),
+    status: text('status').notNull().default('pending'),
+    customerName: text('customer_name').notNull().default(''),
+    email: text('email').notNull().default(''),
+    mobile: text('mobile').notNull().default(''),
+    floor: text('floor').notNull().default(''),
+    address: text('address').notNull().default(''),
+    city: text('city').notNull().default(''),
+    pincode: text('pincode').notNull().default(''),
+    itemsJson: text('items_json').notNull().default('[]'),
+    amountPaise: integer('amount_paise').notNull().default(0),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('shop_orders_reference_uidx').on(t.reference),
+    index('shop_orders_created_idx').on(t.createdAt),
+  ],
+);
+
 /** Member XP / coins / challenge streak / badges. */
 export const userRewards = pgTable(
   'user_rewards',

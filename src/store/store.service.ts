@@ -9,6 +9,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import {
   coinRedemptions,
+  shopOrders,
   shopPromos,
   storeCategories,
   storeKinds,
@@ -532,6 +533,140 @@ export class StoreService {
       .where(eq(shopPromos.id, id))
       .returning();
     return { promo: this.toPromoDto(row!) };
+  }
+
+  async createShopOrder(input: {
+    reference?: string;
+    pineOrderId?: string;
+    customerName?: string;
+    email?: string;
+    mobile?: string;
+    floor?: string;
+    address?: string;
+    city?: string;
+    pincode?: string;
+    items?: { slug?: string; title?: string; size?: string; qty?: number; paise?: number }[];
+    amountPaise?: number;
+  }) {
+    const reference = input.reference?.trim() || '';
+    const email = input.email?.trim() || '';
+    if (!reference || !email.includes('@')) {
+      throw new BadRequestException('Order reference and email are required');
+    }
+    const items = (input.items ?? [])
+      .map((item) => ({
+        slug: item.slug?.trim() || '',
+        title: item.title?.trim() || 'Item',
+        size: item.size?.trim() || '',
+        qty: Math.min(10, Math.max(1, Math.floor(Number(item.qty) || 1))),
+        paise: Math.max(0, Math.floor(Number(item.paise) || 0)),
+      }))
+      .slice(0, 20);
+    const amountPaise = Math.max(0, Math.floor(Number(input.amountPaise) || 0));
+    const payload = {
+      reference,
+      pineOrderId: input.pineOrderId?.trim() || '',
+      status: 'pending',
+      customerName: input.customerName?.trim() || '',
+      email,
+      mobile: (input.mobile || '').replace(/\D/g, '').slice(-10),
+      floor: input.floor?.trim() || '',
+      address: input.address?.trim() || '',
+      city: input.city?.trim() || '',
+      pincode: (input.pincode || '').replace(/\D/g, '').slice(0, 6),
+      itemsJson: JSON.stringify(items),
+      amountPaise,
+      updatedAt: new Date(),
+    };
+    const [row] = await this.db
+      .insert(shopOrders)
+      .values(payload)
+      .onConflictDoUpdate({
+        target: shopOrders.reference,
+        set: payload,
+      })
+      .returning();
+    return { order: this.toShopOrderDto(row!) };
+  }
+
+  async markShopOrderPaid(reference: string, pineOrderId?: string) {
+    const ref = reference.trim();
+    if (!ref) throw new BadRequestException('Order reference is required');
+    const [current] = await this.db
+      .select()
+      .from(shopOrders)
+      .where(eq(shopOrders.reference, ref))
+      .limit(1);
+    if (!current) throw new NotFoundException('Order not found');
+    const [row] = await this.db
+      .update(shopOrders)
+      .set({
+        status: 'paid',
+        pineOrderId: pineOrderId?.trim() || current.pineOrderId,
+        updatedAt: new Date(),
+      })
+      .where(eq(shopOrders.id, current.id))
+      .returning();
+    return { order: this.toShopOrderDto(row!) };
+  }
+
+  async listShopOrders(q?: string) {
+    const query = q?.trim();
+    const match = query
+      ? or(
+          ilike(shopOrders.customerName, `%${query}%`),
+          ilike(shopOrders.email, `%${query}%`),
+          ilike(shopOrders.reference, `%${query}%`),
+          ilike(shopOrders.address, `%${query}%`),
+        )
+      : undefined;
+    const rows = await this.db
+      .select()
+      .from(shopOrders)
+      .where(match)
+      .orderBy(desc(shopOrders.createdAt))
+      .limit(100);
+    return { orders: rows.map((row) => this.toShopOrderDto(row)) };
+  }
+
+  private toShopOrderDto(row: typeof shopOrders.$inferSelect) {
+    let items: { slug: string; title: string; size: string; qty: number; paise: number }[] = [];
+    try {
+      const parsed = JSON.parse(row.itemsJson) as unknown;
+      if (Array.isArray(parsed)) {
+        items = parsed.flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const record = item as Record<string, unknown>;
+          return [
+            {
+              slug: typeof record.slug === 'string' ? record.slug : '',
+              title: typeof record.title === 'string' ? record.title : 'Item',
+              size: typeof record.size === 'string' ? record.size : '',
+              qty: typeof record.qty === 'number' ? record.qty : 1,
+              paise: typeof record.paise === 'number' ? record.paise : 0,
+            },
+          ];
+        });
+      }
+    } catch {
+      items = [];
+    }
+    return {
+      id: row.id,
+      reference: row.reference,
+      pineOrderId: row.pineOrderId,
+      status: row.status,
+      customerName: row.customerName,
+      email: row.email,
+      mobile: row.mobile,
+      floor: row.floor,
+      address: row.address,
+      city: row.city,
+      pincode: row.pincode,
+      items,
+      amountPaise: row.amountPaise,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
   async removePromo(id: string) {

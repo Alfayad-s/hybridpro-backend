@@ -440,6 +440,12 @@ export class AdminController {
     return this.store.remove(id);
   }
 
+  @Get('shop-orders')
+  @UseGuards(CoachGuard)
+  shopOrders(@Query('q') q?: string) {
+    return this.store.listShopOrders(q);
+  }
+
   @Get('shop-promos')
   @UseGuards(CoachGuard)
   shopPromos(@Query('placement') placement?: string) {

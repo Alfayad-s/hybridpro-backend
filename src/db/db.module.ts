@@ -124,6 +124,27 @@ function sessionPoolerUrl(raw: string) {
         await client`CREATE INDEX IF NOT EXISTS shop_promos_active_idx ON shop_promos (active)`;
         await client`ALTER TABLE store_categories ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
         await client`ALTER TABLE store_products ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
+        await client`
+          CREATE TABLE IF NOT EXISTS shop_orders (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            reference text NOT NULL,
+            pine_order_id text NOT NULL DEFAULT '',
+            status text NOT NULL DEFAULT 'pending',
+            customer_name text NOT NULL DEFAULT '',
+            email text NOT NULL DEFAULT '',
+            mobile text NOT NULL DEFAULT '',
+            floor text NOT NULL DEFAULT '',
+            address text NOT NULL DEFAULT '',
+            city text NOT NULL DEFAULT '',
+            pincode text NOT NULL DEFAULT '',
+            items_json text NOT NULL DEFAULT '[]',
+            amount_paise integer NOT NULL DEFAULT 0,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_reference_uidx ON shop_orders (reference)`;
+        await client`CREATE INDEX IF NOT EXISTS shop_orders_created_idx ON shop_orders (created_at)`;
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
