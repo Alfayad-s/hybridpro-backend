@@ -106,6 +106,24 @@ function sessionPoolerUrl(raw: string) {
           await client`ALTER TABLE member_accounts ADD COLUMN IF NOT EXISTS apple_sub text`;
           await client`CREATE UNIQUE INDEX IF NOT EXISTS member_accounts_apple_sub_uidx ON member_accounts (apple_sub) WHERE apple_sub IS NOT NULL`;
         }
+        await client`
+          CREATE TABLE IF NOT EXISTS shop_promos (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            placement text NOT NULL,
+            image_url text NOT NULL,
+            alt text NOT NULL DEFAULT '',
+            label text NOT NULL DEFAULT '',
+            category text NOT NULL DEFAULT '',
+            active boolean NOT NULL DEFAULT true,
+            sort_order integer NOT NULL DEFAULT 0,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS shop_promos_placement_idx ON shop_promos (placement)`;
+        await client`CREATE INDEX IF NOT EXISTS shop_promos_active_idx ON shop_promos (active)`;
+        await client`ALTER TABLE store_categories ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
+        await client`ALTER TABLE store_products ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
@@ -399,6 +417,22 @@ function sessionPoolerUrl(raw: string) {
         await client`CREATE INDEX IF NOT EXISTS store_products_category_idx ON store_products (category)`;
         await client`CREATE INDEX IF NOT EXISTS store_products_active_idx ON store_products (active)`;
         await client`ALTER TABLE store_products ADD COLUMN IF NOT EXISTS coin_price integer`;
+        await client`
+          CREATE TABLE IF NOT EXISTS shop_promos (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            placement text NOT NULL,
+            image_url text NOT NULL,
+            alt text NOT NULL DEFAULT '',
+            label text NOT NULL DEFAULT '',
+            category text NOT NULL DEFAULT '',
+            active boolean NOT NULL DEFAULT true,
+            sort_order integer NOT NULL DEFAULT 0,
+            created_at timestamp DEFAULT now() NOT NULL,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS shop_promos_placement_idx ON shop_promos (placement)`;
+        await client`CREATE INDEX IF NOT EXISTS shop_promos_active_idx ON shop_promos (active)`;
         await client`
           CREATE TABLE IF NOT EXISTS user_rewards (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

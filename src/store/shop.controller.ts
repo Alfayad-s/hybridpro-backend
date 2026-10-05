@@ -10,6 +10,11 @@ export class ShopController {
     return this.store.listShop();
   }
 
+  @Get('maps-key')
+  mapsKey() {
+    return { apiKey: process.env.GOOGLE_MAPS_API_KEY?.trim() || '' };
+  }
+
   @Get('products/:slug')
   async product(@Param('slug') slug: string) {
     const product = await this.store.getShopProduct(slug);

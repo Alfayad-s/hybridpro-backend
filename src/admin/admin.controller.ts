@@ -314,7 +314,14 @@ export class AdminController {
   @Post('products/categories')
   @UseGuards(CoachGuard)
   createProductCategory(
-    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+    @Body()
+    body: {
+      slug?: string;
+      label?: string;
+      sortOrder?: number;
+      active?: boolean;
+      comingSoon?: boolean;
+    },
   ) {
     return this.store.createCategory(body);
   }
@@ -323,7 +330,14 @@ export class AdminController {
   @UseGuards(CoachGuard)
   updateProductCategory(
     @Param('id') id: string,
-    @Body() body: { slug?: string; label?: string; sortOrder?: number; active?: boolean },
+    @Body()
+    body: {
+      slug?: string;
+      label?: string;
+      sortOrder?: number;
+      active?: boolean;
+      comingSoon?: boolean;
+    },
   ) {
     return this.store.updateCategory(id, body);
   }
@@ -387,6 +401,7 @@ export class AdminController {
       sizes?: string[] | string;
       planId?: string | null;
       active?: boolean;
+      comingSoon?: boolean;
       sortOrder?: number;
     },
   ) {
@@ -412,6 +427,7 @@ export class AdminController {
       sizes?: string[] | string;
       planId?: string | null;
       active?: boolean;
+      comingSoon?: boolean;
       sortOrder?: number;
     },
   ) {
@@ -422,6 +438,53 @@ export class AdminController {
   @UseGuards(CoachGuard)
   deleteProduct(@Param('id') id: string) {
     return this.store.remove(id);
+  }
+
+  @Get('shop-promos')
+  @UseGuards(CoachGuard)
+  shopPromos(@Query('placement') placement?: string) {
+    return this.store.listPromos(placement);
+  }
+
+  @Post('shop-promos')
+  @UseGuards(CoachGuard)
+  createShopPromo(
+    @Body()
+    body: {
+      placement?: string;
+      imageUrl?: string | null;
+      alt?: string;
+      label?: string;
+      category?: string;
+      active?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.store.createPromo(body);
+  }
+
+  @Patch('shop-promos/:id')
+  @UseGuards(CoachGuard)
+  updateShopPromo(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      placement?: string;
+      imageUrl?: string | null;
+      alt?: string;
+      label?: string;
+      category?: string;
+      active?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.store.updatePromo(id, body);
+  }
+
+  @Delete('shop-promos/:id')
+  @UseGuards(CoachGuard)
+  deleteShopPromo(@Param('id') id: string) {
+    return this.store.removePromo(id);
   }
 
   @Get('redemptions')

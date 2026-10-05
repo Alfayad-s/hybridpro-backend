@@ -359,6 +359,7 @@ export const storeCategories = pgTable(
     label: text('label').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),
     active: boolean('active').notNull().default(true),
+    comingSoon: boolean('coming_soon').notNull().default(false),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -400,6 +401,7 @@ export const storeProducts = pgTable(
     sizes: text('sizes'),
     planId: text('plan_id'),
     active: boolean('active').notNull().default(true),
+    comingSoon: boolean('coming_soon').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -408,6 +410,30 @@ export const storeProducts = pgTable(
     uniqueIndex('store_products_slug_uidx').on(t.slug),
     index('store_products_category_idx').on(t.category),
     index('store_products_active_idx').on(t.active),
+  ],
+);
+
+/** Website /shop top banners and between-card promo tiles. */
+export const shopPromos = pgTable(
+  'shop_promos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** banner = top stack, card = masonry tile between products */
+    placement: text('placement').notNull(),
+    imageUrl: text('image_url').notNull(),
+    alt: text('alt').notNull().default(''),
+    /** Short chip on a banner. Unused for card tiles. */
+    label: text('label').notNull().default(''),
+    /** Shop category slug. Empty means a tap does not filter. */
+    category: text('category').notNull().default(''),
+    active: boolean('active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('shop_promos_placement_idx').on(t.placement),
+    index('shop_promos_active_idx').on(t.active),
   ],
 );
 

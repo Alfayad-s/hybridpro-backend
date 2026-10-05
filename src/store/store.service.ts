@@ -9,6 +9,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import {
   coinRedemptions,
+  shopPromos,
   storeCategories,
   storeKinds,
   storeProducts,
@@ -32,12 +33,40 @@ const KIND_SEED = [
   { slug: 'merch', label: 'Merch', sortOrder: 10 },
 ] as const;
 
+const PROMO_SEED = [
+  {
+    placement: 'banner',
+    imageUrl: '/shop/banner-guides-offer.jpg',
+    alt: 'Hybrid Pro e-books from ₹599',
+    label: 'E-Books',
+    category: 'ebooks',
+    sortOrder: 0,
+  },
+  {
+    placement: 'banner',
+    imageUrl: '/shop/banner-guides-light.jpg',
+    alt: 'Hybrid Pro playbook from ₹599',
+    label: 'E-Books',
+    category: 'ebooks',
+    sortOrder: 1,
+  },
+  {
+    placement: 'card',
+    imageUrl: '/shop/masonry-guides-offer.jpg',
+    alt: 'E-Books from ₹599',
+    label: '',
+    category: 'ebooks',
+    sortOrder: 0,
+  },
+] as const;
+
 export type StoreTaxonomyDto = {
   id: string;
   slug: string;
   label: string;
   sortOrder: number;
   active: boolean;
+  comingSoon: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -47,6 +76,7 @@ export type StoreTaxonomyInput = {
   label?: string;
   sortOrder?: number;
   active?: boolean;
+  comingSoon?: boolean;
 };
 
 export type StoreProductDto = {
@@ -64,9 +94,33 @@ export type StoreProductDto = {
   sizes: string[];
   planId: string | null;
   active: boolean;
+  comingSoon: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ShopPromoDto = {
+  id: string;
+  placement: 'banner' | 'card';
+  imageUrl: string;
+  alt: string;
+  label: string;
+  category: string;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShopPromoInput = {
+  placement?: string;
+  imageUrl?: string | null;
+  alt?: string;
+  label?: string;
+  category?: string;
+  active?: boolean;
+  sortOrder?: number;
 };
 
 export type StoreProductInput = {
@@ -83,6 +137,7 @@ export type StoreProductInput = {
   sizes?: string[] | string;
   planId?: string | null;
   active?: boolean;
+  comingSoon?: boolean;
   sortOrder?: number;
 };
 
@@ -114,7 +169,10 @@ export class StoreService {
 
   async createCategory(input: StoreTaxonomyInput) {
     await this.ensureSeeded();
-    const payload = this.toTaxonomyRow(input, true);
+    const payload = {
+      ...this.toTaxonomyRow(input, true),
+      comingSoon: Boolean(input.comingSoon),
+    };
     const [clash] = await this.db
       .select({ id: storeCategories.id })
       .from(storeCategories)
@@ -133,7 +191,13 @@ export class StoreService {
       .where(eq(storeCategories.id, id))
       .limit(1);
     if (!current) throw new NotFoundException('Category not found');
-    const payload = this.toTaxonomyRow(input, false, current);
+    const payload = {
+      ...this.toTaxonomyRow(input, false, current),
+      comingSoon:
+        input.comingSoon !== undefined
+          ? Boolean(input.comingSoon)
+          : current.comingSoon,
+    };
     if (payload.slug !== current.slug) {
       const [clash] = await this.db
         .select({ id: storeCategories.id })
@@ -331,12 +395,34 @@ export class StoreService {
       .from(storeCategories)
       .where(eq(storeCategories.active, true))
       .orderBy(asc(storeCategories.sortOrder), asc(storeCategories.label));
-    const used = new Set(rows.map((row) => row.category));
+    const comingSoonSlugs = new Set(
+      categories.filter((category) => category.comingSoon).map((category) => category.slug),
+    );
+    const visibleRows = rows.filter((row) => !comingSoonSlugs.has(row.category));
+    const used = new Set(visibleRows.map((row) => row.category));
+    const promos = await this.db
+      .select()
+      .from(shopPromos)
+      .where(eq(shopPromos.active, true))
+      .orderBy(asc(shopPromos.sortOrder), asc(shopPromos.createdAt));
+    const toPublic = (row: typeof shopPromos.$inferSelect) => ({
+      id: row.id,
+      image: row.imageUrl,
+      alt: row.alt,
+      label: row.label,
+      category: row.category,
+    });
     return {
       categories: categories
-        .filter((category) => used.has(category.slug))
-        .map((category) => ({ slug: category.slug, label: category.label })),
-      products: rows.map((row) => this.toShopProduct(row)),
+        .filter((category) => used.has(category.slug) || category.comingSoon)
+        .map((category) => ({
+          slug: category.slug,
+          label: category.label,
+          comingSoon: category.comingSoon,
+        })),
+      products: visibleRows.map((row) => this.toShopProduct(row)),
+      banners: promos.filter((row) => row.placement === 'banner').map(toPublic),
+      cardPromos: promos.filter((row) => row.placement === 'card').map(toPublic),
     };
   }
 
@@ -353,7 +439,15 @@ export class StoreService {
         ),
       )
       .limit(1);
-    return row ? this.toShopProduct(row) : null;
+    if (!row) return null;
+    const [category] = await this.db
+      .select({ comingSoon: storeCategories.comingSoon })
+      .from(storeCategories)
+      .where(eq(storeCategories.slug, row.category))
+      .limit(1);
+    const product = this.toShopProduct(row);
+    if (category?.comingSoon) product.comingSoon = true;
+    return product;
   }
 
   async create(input: StoreProductInput) {
@@ -398,6 +492,55 @@ export class StoreService {
       .where(eq(storeProducts.id, id))
       .returning();
     return { product: this.toProductDto(row!) };
+  }
+
+  async listPromos(placement?: string) {
+    await this.ensureSeeded();
+    const spot = this.parsePlacement(placement, false);
+    const rows = spot
+      ? await this.db
+          .select()
+          .from(shopPromos)
+          .where(eq(shopPromos.placement, spot))
+          .orderBy(asc(shopPromos.sortOrder), asc(shopPromos.createdAt))
+      : await this.db
+          .select()
+          .from(shopPromos)
+          .orderBy(asc(shopPromos.sortOrder), asc(shopPromos.createdAt));
+    return { promos: rows.map((row) => this.toPromoDto(row)) };
+  }
+
+  async createPromo(input: ShopPromoInput) {
+    await this.ensureSeeded();
+    const payload = await this.toPromoRow(input, true);
+    const [row] = await this.db.insert(shopPromos).values(payload).returning();
+    return { promo: this.toPromoDto(row!) };
+  }
+
+  async updatePromo(id: string, input: ShopPromoInput) {
+    await this.ensureSeeded();
+    const [current] = await this.db
+      .select()
+      .from(shopPromos)
+      .where(eq(shopPromos.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Promo not found');
+    const payload = await this.toPromoRow(input, false, current);
+    const [row] = await this.db
+      .update(shopPromos)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(shopPromos.id, id))
+      .returning();
+    return { promo: this.toPromoDto(row!) };
+  }
+
+  async removePromo(id: string) {
+    const [row] = await this.db
+      .delete(shopPromos)
+      .where(eq(shopPromos.id, id))
+      .returning({ id: shopPromos.id });
+    if (!row) throw new NotFoundException('Promo not found');
+    return { ok: true as const };
   }
 
   async remove(id: string) {
@@ -477,6 +620,21 @@ export class StoreService {
       await this.db
         .delete(storeCategories)
         .where(inArray(storeCategories.slug, [...RETIRED_CATEGORIES]));
+
+      const [promoCount] = await this.db.select({ n: count() }).from(shopPromos);
+      if ((promoCount?.n ?? 0) === 0) {
+        for (const item of PROMO_SEED) {
+          await this.db.insert(shopPromos).values({
+            placement: item.placement,
+            imageUrl: item.imageUrl,
+            alt: item.alt,
+            label: item.label,
+            category: item.category,
+            active: true,
+            sortOrder: item.sortOrder,
+          });
+        }
+      }
     })().finally(() => {
       this.seeding = null;
     });
@@ -577,6 +735,10 @@ export class StoreService {
         input.active !== undefined
           ? Boolean(input.active)
           : (current?.active ?? true),
+      comingSoon:
+        input.comingSoon !== undefined
+          ? Boolean(input.comingSoon)
+          : (current?.comingSoon ?? false),
       sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
     };
   }
@@ -642,6 +804,7 @@ export class StoreService {
     label: string;
     sortOrder: number;
     active: boolean;
+    comingSoon?: boolean;
     createdAt: Date;
     updatedAt: Date;
   }): StoreTaxonomyDto {
@@ -651,6 +814,59 @@ export class StoreService {
       label: row.label,
       sortOrder: row.sortOrder,
       active: row.active,
+      comingSoon: Boolean(row.comingSoon),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private parsePlacement(value: string | undefined, required: boolean) {
+    const placement = (value ?? '').trim();
+    if (!placement) {
+      if (required) throw new BadRequestException('Placement is required');
+      return null;
+    }
+    if (placement !== 'banner' && placement !== 'card') {
+      throw new BadRequestException('Placement must be banner or card');
+    }
+    return placement;
+  }
+
+  private async toPromoRow(
+    input: ShopPromoInput,
+    creating: boolean,
+    current?: typeof shopPromos.$inferSelect,
+  ) {
+    const placement = this.parsePlacement(
+      input.placement ?? current?.placement,
+      true,
+    )!;
+    const imageUrl = (input.imageUrl ?? current?.imageUrl ?? '').trim();
+    if (!imageUrl) throw new BadRequestException('Image is required');
+    const alt = (input.alt ?? current?.alt ?? '').trim();
+    if (!alt) throw new BadRequestException('Alt text is required');
+    const label = (input.label ?? current?.label ?? '').trim();
+    const category = (input.category ?? current?.category ?? '').trim();
+    if (category) await this.requireCategorySlug(category);
+    const sortOrder =
+      input.sortOrder != null && Number.isFinite(input.sortOrder)
+        ? Math.trunc(input.sortOrder)
+        : (current?.sortOrder ?? 0);
+    const active = input.active ?? current?.active ?? true;
+    if (!creating && !current) throw new NotFoundException('Promo not found');
+    return { placement, imageUrl, alt, label, category, sortOrder, active };
+  }
+
+  private toPromoDto(row: typeof shopPromos.$inferSelect): ShopPromoDto {
+    return {
+      id: row.id,
+      placement: row.placement === 'card' ? 'card' : 'banner',
+      imageUrl: row.imageUrl,
+      alt: row.alt,
+      label: row.label,
+      category: row.category,
+      active: row.active,
+      sortOrder: row.sortOrder,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -667,6 +883,7 @@ export class StoreService {
       pricePaise: row.pricePaise,
       image: row.imageUrl,
       sizes: this.normalizeSizes(row.sizes),
+      comingSoon: row.comingSoon,
     };
   }
 
@@ -686,6 +903,7 @@ export class StoreService {
       sizes: this.normalizeSizes(row.sizes),
       planId: row.planId,
       active: row.active,
+      comingSoon: row.comingSoon,
       sortOrder: row.sortOrder,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

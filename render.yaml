@@ -17,3 +17,5 @@ services:
         value: "Hybrid Pro <noreply@hybridpro.in>"
       - key: GOOGLE_CLIENT_IDS
         sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
