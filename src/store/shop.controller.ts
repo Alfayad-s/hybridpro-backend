@@ -12,7 +12,8 @@ export class ShopController {
 
   @Get('maps-key')
   mapsKey() {
-    return { apiKey: process.env.GOOGLE_MAPS_API_KEY?.trim() || '' };
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() || '';
+    return { apiKey };
   }
 
   @Get('products/:slug')
