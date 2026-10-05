@@ -27,6 +27,7 @@ import { AppStoreBillingService } from './payments/app-store-billing.service.js'
 import { PlayBillingService } from './payments/play-billing.service.js';
 import { EventsGateway } from './realtime/events.gateway.js';
 import { RealtimeFanoutService } from './realtime/realtime-fanout.service.js';
+import { ShopController } from './store/shop.controller.js';
 import { StoreService } from './store/store.service.js';
 import { SubscriptionsController } from './subscriptions/subscriptions.controller.js';
 import { SubscriptionService } from './subscriptions/subscription.service.js';
@@ -63,6 +64,7 @@ import { WalletService } from './rewards/wallet.service.js';
     AdminController,
     ExercisesController,
     MeController,
+    ShopController,
     AuthController,
   ],
   providers: [

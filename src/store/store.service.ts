@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, ilike, isNull, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DB } from '../db/db.module.js';
 import {
@@ -21,10 +21,10 @@ type Db = PostgresJsDatabase<typeof import('../db/schema.js')>;
 /** Plans first, then merch categories. */
 const CATEGORY_SEED = [
   { slug: 'plans', label: 'Plans', sortOrder: 0 },
-  { slug: 'tees', label: 'Tees', sortOrder: 10 },
-  { slug: 'shorts', label: 'Shorts', sortOrder: 20 },
   { slug: 'ebooks', label: 'E-Books', sortOrder: 30 },
 ] as const;
+
+const RETIRED_CATEGORIES = ['tees', 'shorts'] as const;
 
 /** Plan kind first. */
 const KIND_SEED = [
@@ -318,6 +318,44 @@ export class StoreService {
     return { products: rows.map((row) => this.toProductDto(row)) };
   }
 
+  /** Public website shop: active merch only. Coaching plans stay on /pricing. */
+  async listShop() {
+    await this.ensureSeeded();
+    const rows = await this.db
+      .select()
+      .from(storeProducts)
+      .where(and(eq(storeProducts.active, true), eq(storeProducts.kind, 'merch')))
+      .orderBy(asc(storeProducts.sortOrder), asc(storeProducts.title));
+    const categories = await this.db
+      .select()
+      .from(storeCategories)
+      .where(eq(storeCategories.active, true))
+      .orderBy(asc(storeCategories.sortOrder), asc(storeCategories.label));
+    const used = new Set(rows.map((row) => row.category));
+    return {
+      categories: categories
+        .filter((category) => used.has(category.slug))
+        .map((category) => ({ slug: category.slug, label: category.label })),
+      products: rows.map((row) => this.toShopProduct(row)),
+    };
+  }
+
+  async getShopProduct(slug: string) {
+    await this.ensureSeeded();
+    const [row] = await this.db
+      .select()
+      .from(storeProducts)
+      .where(
+        and(
+          eq(storeProducts.slug, slug.trim()),
+          eq(storeProducts.active, true),
+          eq(storeProducts.kind, 'merch'),
+        ),
+      )
+      .limit(1);
+    return row ? this.toShopProduct(row) : null;
+  }
+
   async create(input: StoreProductInput) {
     await this.ensureSeeded();
     const payload = await this.toProductRow(input, true);
@@ -418,18 +456,27 @@ export class StoreService {
             sortOrder: item.sortOrder,
           });
         }
-      } else {
-        // Backfill coin prices for known redeemable merch.
-        await this.db
-          .update(storeProducts)
-          .set({ coinPrice: 500, updatedAt: new Date() })
-          .where(
-            and(
-              eq(storeProducts.slug, 'tee-black'),
-              isNull(storeProducts.coinPrice),
-            ),
-          );
       }
+
+      await this.db
+        .update(storeCategories)
+        .set({ label: 'E-Books', updatedAt: new Date() })
+        .where(eq(storeCategories.slug, 'ebooks'));
+
+      const retired = await this.db
+        .select({ id: storeProducts.id })
+        .from(storeProducts)
+        .where(inArray(storeProducts.category, [...RETIRED_CATEGORIES]));
+      if (retired.length > 0) {
+        const ids = retired.map((row) => row.id);
+        await this.db
+          .delete(coinRedemptions)
+          .where(inArray(coinRedemptions.productId, ids));
+        await this.db.delete(storeProducts).where(inArray(storeProducts.id, ids));
+      }
+      await this.db
+        .delete(storeCategories)
+        .where(inArray(storeCategories.slug, [...RETIRED_CATEGORIES]));
     })().finally(() => {
       this.seeding = null;
     });
@@ -606,6 +653,20 @@ export class StoreService {
       active: row.active,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private toShopProduct(row: typeof storeProducts.$inferSelect) {
+    return {
+      slug: row.slug,
+      title: row.title,
+      subtitle: row.subtitle ?? '',
+      description: row.description ?? '',
+      category: row.category,
+      priceLabel: row.priceLabel,
+      pricePaise: row.pricePaise,
+      image: row.imageUrl,
+      sizes: this.normalizeSizes(row.sizes),
     };
   }
 

@@ -3,7 +3,7 @@ export type StoreSeedProduct = {
   title: string;
   subtitle: string;
   description?: string;
-  category: 'plans' | 'tees' | 'shorts' | 'ebooks';
+  category: 'plans' | 'ebooks';
   kind: 'plan' | 'merch';
   priceLabel: string;
   pricePaise?: number;
@@ -55,147 +55,6 @@ export const STORE_SEED_PRODUCTS: StoreSeedProduct[] = [
     planId: 'elite',
     description: 'Personalized training, expert guidance.',
     sortOrder: 30,
-  },
-  {
-    slug: 'tee-black',
-    title: 'Hybrid Tee',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,499',
-    pricePaise: 149900,
-    coinPrice: 500,
-    imageUrl: 'asset:assets/store/tshirt-3d.png',
-    category: 'tees',
-    kind: 'merch',
-    description:
-      'Black performance tee with the Hybrid Pro mark on the chest. Soft stretch fabric for training and everyday wear.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 100,
-  },
-  {
-    slug: 'tee-charcoal',
-    title: 'Mark Tee',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,599',
-    pricePaise: 159900,
-    imageUrl: 'asset:assets/store/tshirt-charcoal-3d.png',
-    category: 'tees',
-    kind: 'merch',
-    description:
-      'Charcoal athletic tee with a bold neon Hybrid Pro logo print. Lightweight and breathable.',
-    sizes: ['S', 'M', 'L', 'XL', 'XXL'],
-    sortOrder: 110,
-  },
-  {
-    slug: 'tee-white',
-    title: 'Core Tee',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,499',
-    pricePaise: 149900,
-    imageUrl: 'asset:assets/store/tee-white-3d.png',
-    category: 'tees',
-    kind: 'merch',
-    description:
-      'White performance tee with lime Hybrid Pro logo. Clean everyday training staple.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 120,
-  },
-  {
-    slug: 'tee-lime',
-    title: 'Volt Tee',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,699',
-    pricePaise: 169900,
-    imageUrl: 'asset:assets/store/tee-lime-3d.png',
-    category: 'tees',
-    kind: 'merch',
-    description:
-      'Neon lime statement tee with black Hybrid Pro mark. Made to stand out in the gym.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 130,
-  },
-  {
-    slug: 'tee-navy',
-    title: 'Night Tee',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,549',
-    pricePaise: 154900,
-    imageUrl: 'asset:assets/store/tee-navy-3d.png',
-    category: 'tees',
-    kind: 'merch',
-    description:
-      'Navy athletic tee with lime Hybrid Pro logo. Soft mesh fabric for heavy sessions.',
-    sizes: ['S', 'M', 'L', 'XL', 'XXL'],
-    sortOrder: 140,
-  },
-  {
-    slug: 'shorts-black',
-    title: 'Train Shorts',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,299',
-    pricePaise: 129900,
-    imageUrl: 'asset:assets/store/shorts-3d.png',
-    category: 'shorts',
-    kind: 'merch',
-    description:
-      'Black training shorts with Hybrid Pro logo on the thigh. Built for lifts, runs, and rest days.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 200,
-  },
-  {
-    slug: 'shorts-olive',
-    title: 'Studio Shorts',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,399',
-    pricePaise: 139900,
-    imageUrl: 'asset:assets/store/shorts-olive-3d.png',
-    category: 'shorts',
-    kind: 'merch',
-    description:
-      'Olive performance shorts with a discreet Hybrid Pro mark. Soft waistband and quick-dry fabric.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 210,
-  },
-  {
-    slug: 'shorts-heather',
-    title: 'Drift Shorts',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,349',
-    pricePaise: 134900,
-    imageUrl: 'asset:assets/store/shorts-heather-3d.png',
-    category: 'shorts',
-    kind: 'merch',
-    description:
-      'Heather grey training shorts with lime Hybrid Pro logo. Everyday gym essential.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 220,
-  },
-  {
-    slug: 'shorts-navy',
-    title: 'Pulse Shorts',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,399',
-    pricePaise: 139900,
-    imageUrl: 'asset:assets/store/shorts-navy-3d.png',
-    category: 'shorts',
-    kind: 'merch',
-    description:
-      'Navy performance shorts with Hybrid Pro mark. Breathable mesh for hard sessions.',
-    sizes: ['S', 'M', 'L', 'XL', 'XXL'],
-    sortOrder: 230,
-  },
-  {
-    slug: 'shorts-white',
-    title: 'Air Shorts',
-    subtitle: 'Available sizes',
-    priceLabel: '₹1,299',
-    pricePaise: 129900,
-    imageUrl: 'asset:assets/store/shorts-white-3d.png',
-    category: 'shorts',
-    kind: 'merch',
-    description:
-      'White training shorts with lime Hybrid Pro logo. Light, clean, and ready to train.',
-    sizes: ['S', 'M', 'L', 'XL'],
-    sortOrder: 240,
   },
   {
     slug: 'ebook-training',
@@ -261,5 +120,117 @@ export const STORE_SEED_PRODUCTS: StoreSeedProduct[] = [
     description:
       'Hybrid Habits — daily systems for training consistency, nutrition adherence, and mindset.',
     sortOrder: 340,
+  },
+  {
+    slug: 'glute-ultimate-workouts',
+    title: 'Glute Ultimate Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223533/gymtrack/store/products/product-muvk8rq8.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Glute Ultimate Workouts — a complete guide to building stronger, sculpted glutes with targeted workouts, progressive programs, exercise guidance, and practical form cues.',
+    sortOrder: 301,
+  },
+  {
+    slug: 'monster-back-workouts',
+    title: 'Monster Back Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223567/gymtrack/store/products/product-muvk9hji.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Monster Back Workouts — build a wider, thicker, stronger back with science-based workouts, progressive programs, exercise guidance, and form-focused training.',
+    sortOrder: 302,
+  },
+  {
+    slug: 'gun-biceps-workouts',
+    title: 'Gun Biceps Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223612/gymtrack/store/products/product-muvkagis.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Gun Biceps Workouts — build bigger, stronger and more defined arms with targeted biceps training, progressive overload, exercise guidance, and proven workout programs.',
+    sortOrder: 303,
+  },
+  {
+    slug: 'titan-chest-workouts',
+    title: 'Titan Chest Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223627/gymtrack/store/products/product-muvkasas.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Titan Chest Workouts — build a bigger, stronger and more defined chest with structured training, progressive programs, exercise guidance, and practical form cues.',
+    sortOrder: 304,
+  },
+  {
+    slug: 'quad-beast-workouts',
+    title: 'Quad Beast Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223638/gymtrack/store/products/product-muvkb0gg.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Quad Beast Workouts — develop bigger, stronger and more defined legs with quad-focused exercises, progressive training programs, workout guidance, and form cues.',
+    sortOrder: 305,
+  },
+  {
+    slug: '3d-shoulder-workouts',
+    title: '3D Shoulder Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223670/gymtrack/store/products/product-muvkbpan.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro 3D Shoulder Workouts — build wider, rounder and stronger shoulders with targeted delt training, progressive programs, anatomy guidance, and exercise-specific form cues.',
+    sortOrder: 306,
+  },
+  {
+    slug: 'triceps-x-workouts',
+    title: 'Triceps X Workouts',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223682/gymtrack/store/products/product-muvkbykj.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Triceps X Workouts — build bigger and stronger triceps with targeted training, progressive overload, activation-focused exercises, form guidance, and structured workout programs.',
+    sortOrder: 307,
+  },
+  {
+    slug: 'armor-core-abs-workout',
+    title: 'Armor Core',
+    subtitle: 'Digital download',
+    priceLabel: '₹799',
+    pricePaise: 79900,
+    imageUrl:
+      'https://res.cloudinary.com/dxfj2ocp/image/upload/v1791223697/gymtrack/store/products/product-muvkca6o.jpg',
+    category: 'ebooks',
+    kind: 'merch',
+    description:
+      'Hybrid Pro Armor Core — a complete abs workout guide for building a stronger, leaner and more defined core with progressive programs, targeted exercises, form guidance, and practical training strategies.',
+    sortOrder: 308,
   },
 ];
