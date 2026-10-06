@@ -145,6 +145,7 @@ function sessionPoolerUrl(raw: string) {
         `;
         await client`CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_reference_uidx ON shop_orders (reference)`;
         await client`CREATE INDEX IF NOT EXISTS shop_orders_created_idx ON shop_orders (created_at)`;
+        await client`ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS reject_reason text NOT NULL DEFAULT ''`;
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }

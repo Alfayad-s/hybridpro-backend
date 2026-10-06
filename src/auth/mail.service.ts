@@ -98,6 +98,86 @@ export class MailService {
     }
   }
 
+  async sendOrderAccepted(input: {
+    to: string;
+    customerName: string;
+    items: { title: string; size: string; qty: number; linePaise: number; stockOut: boolean }[];
+    amountPaise: number;
+    delivery: string;
+  }) {
+    const name = input.customerName.trim() || 'there';
+    const rupees = (paise: number) => {
+      const value = paise / 100;
+      return paise % 100 === 0 ? value.toFixed(0) : value.toFixed(2);
+    };
+    const lines = input.items
+      .filter((item) => !item.stockOut && item.qty > 0)
+      .map(
+        (item) =>
+          `${item.title}${item.size ? ` (${item.size})` : ''} x${item.qty} — ₹${rupees(item.linePaise)}`,
+      );
+    const total = `₹${rupees(input.amountPaise)}`;
+    const subject = 'Your Hybrid Pro order is confirmed';
+    const text = [
+      `Hi ${name},`,
+      '',
+      'Your order is accepted and confirmed.',
+      '',
+      ...lines,
+      '',
+      `Total ${total}`,
+      input.delivery ? `Delivery ${input.delivery}` : '',
+      '',
+      'Hybrid Pro',
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
+    const html = `
+      <p>Hi ${this.escapeHtml(name)},</p>
+      <p>Your order is accepted and confirmed.</p>
+      <ul>${lines.map((line) => `<li>${this.escapeHtml(line)}</li>`).join('')}</ul>
+      <p><strong>Total ${this.escapeHtml(total)}</strong></p>
+      ${input.delivery ? `<p>Delivery ${this.escapeHtml(input.delivery)}</p>` : ''}
+    `;
+    await this.deliver({ to: input.to, subject, html, text });
+  }
+
+  private async deliver(input: { to: string; subject: string; html: string; text: string }) {
+    const apiKey = process.env.RESEND_API_KEY?.trim();
+    const from =
+      process.env.RESEND_FROM?.trim() ||
+      process.env.EMAIL_FROM?.trim() ||
+      'Hybrid Pro <noreply@hybridpro.in>';
+    if (!apiKey) {
+      this.logger.error('RESEND_API_KEY is not set — cannot send order email');
+      throw new ServiceUnavailableException('Email is not configured. Set RESEND_API_KEY on the API.');
+    }
+    const response = await this.withTimeout(
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [input.to],
+          subject: input.subject,
+          html: input.html,
+          text: input.text,
+        }),
+      }),
+      MailService.sendTimeoutMs,
+      'Resend request timed out.',
+    );
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      this.logger.error(`Resend failed (${response.status}): ${body}`);
+      throw new ServiceUnavailableException('Could not send the order email. Please try again.');
+    }
+    this.logger.log(`Order email sent via Resend to ${input.to}`);
+  }
+
   private withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(message)), ms);

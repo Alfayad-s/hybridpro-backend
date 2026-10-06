@@ -31,7 +31,15 @@ export class ShopController {
       address?: string;
       city?: string;
       pincode?: string;
-      items?: { slug?: string; title?: string; size?: string; qty?: number; paise?: number }[];
+      items?: {
+        slug?: string;
+        title?: string;
+        size?: string;
+        qty?: number;
+        paise?: number;
+        unitPaise?: number;
+        image?: string;
+      }[];
       amountPaise?: number;
     },
   ) {

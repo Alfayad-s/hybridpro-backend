@@ -15,6 +15,7 @@ import {
   storeKinds,
   storeProducts,
 } from '../db/schema.js';
+import { MailService } from '../auth/mail.service.js';
 import { WalletService } from '../rewards/wallet.service.js';
 import { STORE_SEED_PRODUCTS } from './store-seed.js';
 
@@ -149,6 +150,7 @@ export class StoreService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly wallet: WalletService,
+    private readonly mail: MailService,
   ) {}
 
   // ─── Categories ─────────────────────────────────────────────
@@ -400,7 +402,6 @@ export class StoreService {
       categories.filter((category) => category.comingSoon).map((category) => category.slug),
     );
     const visibleRows = rows.filter((row) => !comingSoonSlugs.has(row.category));
-    const used = new Set(visibleRows.map((row) => row.category));
     const promos = await this.db
       .select()
       .from(shopPromos)
@@ -415,7 +416,7 @@ export class StoreService {
     });
     return {
       categories: categories
-        .filter((category) => used.has(category.slug) || category.comingSoon)
+        .filter((category) => category.slug !== 'plans')
         .map((category) => ({
           slug: category.slug,
           label: category.label,
@@ -545,7 +546,16 @@ export class StoreService {
     address?: string;
     city?: string;
     pincode?: string;
-    items?: { slug?: string; title?: string; size?: string; qty?: number; paise?: number }[];
+    items?: {
+      slug?: string;
+      title?: string;
+      size?: string;
+      qty?: number;
+      paise?: number;
+      unitPaise?: number;
+      image?: string;
+      stockOut?: boolean;
+    }[];
     amountPaise?: number;
   }) {
     const reference = input.reference?.trim() || '';
@@ -553,15 +563,7 @@ export class StoreService {
     if (!reference || !email.includes('@')) {
       throw new BadRequestException('Order reference and email are required');
     }
-    const items = (input.items ?? [])
-      .map((item) => ({
-        slug: item.slug?.trim() || '',
-        title: item.title?.trim() || 'Item',
-        size: item.size?.trim() || '',
-        qty: Math.min(10, Math.max(1, Math.floor(Number(item.qty) || 1))),
-        paise: Math.max(0, Math.floor(Number(item.paise) || 0)),
-      }))
-      .slice(0, 20);
+    const items = this.normalizeOrderItems(input.items ?? []);
     const amountPaise = Math.max(0, Math.floor(Number(input.amountPaise) || 0));
     const payload = {
       reference,
@@ -575,7 +577,7 @@ export class StoreService {
       city: input.city?.trim() || '',
       pincode: (input.pincode || '').replace(/\D/g, '').slice(0, 6),
       itemsJson: JSON.stringify(items),
-      amountPaise,
+      amountPaise: this.orderTotal(items) || amountPaise,
       updatedAt: new Date(),
     };
     const [row] = await this.db
@@ -586,7 +588,7 @@ export class StoreService {
         set: payload,
       })
       .returning();
-    return { order: this.toShopOrderDto(row!) };
+    return { order: await this.toShopOrderDto(row!) };
   }
 
   async markShopOrderPaid(reference: string, pineOrderId?: string) {
@@ -598,6 +600,9 @@ export class StoreService {
       .where(eq(shopOrders.reference, ref))
       .limit(1);
     if (!current) throw new NotFoundException('Order not found');
+    if (current.status === 'accepted' || current.status === 'rejected') {
+      return { order: await this.toShopOrderDto(current) };
+    }
     const [row] = await this.db
       .update(shopOrders)
       .set({
@@ -607,7 +612,85 @@ export class StoreService {
       })
       .where(eq(shopOrders.id, current.id))
       .returning();
-    return { order: this.toShopOrderDto(row!) };
+    return { order: await this.toShopOrderDto(row!) };
+  }
+
+  async updateShopOrder(
+    id: string,
+    items: {
+      slug?: string;
+      title?: string;
+      size?: string;
+      qty?: number;
+      paise?: number;
+      unitPaise?: number;
+      image?: string;
+      stockOut?: boolean;
+    }[],
+  ) {
+    const current = await this.requireEditableOrder(id);
+    const nextItems = this.normalizeOrderItems(items);
+    if (nextItems.length === 0) {
+      throw new BadRequestException('An order needs at least one item');
+    }
+    const [row] = await this.db
+      .update(shopOrders)
+      .set({
+        itemsJson: JSON.stringify(nextItems),
+        amountPaise: this.orderTotal(nextItems),
+        updatedAt: new Date(),
+      })
+      .where(eq(shopOrders.id, current.id))
+      .returning();
+    return { order: await this.toShopOrderDto(row!) };
+  }
+
+  async acceptShopOrder(id: string) {
+    const [current] = await this.db
+      .select()
+      .from(shopOrders)
+      .where(eq(shopOrders.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Order not found');
+    if (current.status === 'accepted') return { order: await this.toShopOrderDto(current) };
+    if (current.status !== 'paid') {
+      throw new BadRequestException('Only a paid order can be accepted');
+    }
+    const order = await this.toShopOrderDto(current);
+    const delivery = [order.floor, order.address, [order.city, order.pincode].filter(Boolean).join(' ')]
+      .filter((part) => part.trim())
+      .join(', ');
+    await this.mail.sendOrderAccepted({
+      to: order.email,
+      customerName: order.customerName,
+      items: order.items.map((item) => ({
+        title: item.title,
+        size: item.size,
+        qty: item.qty,
+        linePaise: item.stockOut ? 0 : item.unitPaise * item.qty,
+        stockOut: item.stockOut,
+      })),
+      amountPaise: order.amountPaise,
+      delivery,
+    });
+    const [row] = await this.db
+      .update(shopOrders)
+      .set({ status: 'accepted', updatedAt: new Date() })
+      .where(eq(shopOrders.id, current.id))
+      .returning();
+    return { order: await this.toShopOrderDto(row!) };
+  }
+
+  async rejectShopOrder(id: string, reason?: string) {
+    const current = await this.requireEditableOrder(id);
+    const rejectReason = reason?.trim() || '';
+    if (!rejectReason) throw new BadRequestException('A reason is required');
+    const [row] = await this.db
+      .update(shopOrders)
+      .set({ status: 'rejected', rejectReason, updatedAt: new Date() })
+      .where(eq(shopOrders.id, current.id))
+      .returning();
+    return { order: await this.toShopOrderDto(row!) };
   }
 
   async listShopOrders(q?: string) {
@@ -626,30 +709,111 @@ export class StoreService {
       .where(match)
       .orderBy(desc(shopOrders.createdAt))
       .limit(100);
-    return { orders: rows.map((row) => this.toShopOrderDto(row)) };
+    const orders = await Promise.all(rows.map((row) => this.toShopOrderDto(row)));
+    return { orders };
   }
 
-  private toShopOrderDto(row: typeof shopOrders.$inferSelect) {
-    let items: { slug: string; title: string; size: string; qty: number; paise: number }[] = [];
+  private async requireEditableOrder(id: string) {
+    const [current] = await this.db
+      .select()
+      .from(shopOrders)
+      .where(eq(shopOrders.id, id))
+      .limit(1);
+    if (!current) throw new NotFoundException('Order not found');
+    if (current.status !== 'pending' && current.status !== 'paid') {
+      throw new BadRequestException('This order can no longer be edited');
+    }
+    return current;
+  }
+
+  private normalizeOrderItems(
+    input: {
+      slug?: string;
+      title?: string;
+      size?: string;
+      qty?: number;
+      paise?: number;
+      unitPaise?: number;
+      image?: string;
+      stockOut?: boolean;
+    }[],
+  ) {
+    return input.slice(0, 20).map((item) => {
+      const requestedQty = Math.floor(Number(item.qty) || 0);
+      const stockOut = Boolean(item.stockOut) || requestedQty < 1;
+      const qty = stockOut ? 0 : Math.min(10, Math.max(1, requestedQty));
+      const linePaise = Math.max(0, Math.floor(Number(item.paise) || 0));
+      const unitFromLine = qty > 0 ? Math.round(linePaise / qty) : linePaise;
+      const unitPaise = Math.max(
+        0,
+        Math.floor(Number(item.unitPaise) || unitFromLine || 0),
+      );
+      return {
+        slug: item.slug?.trim() || '',
+        title: item.title?.trim() || 'Item',
+        size: item.size?.trim() || '',
+        qty,
+        unitPaise,
+        paise: stockOut ? 0 : unitPaise * qty,
+        image: item.image?.trim() || '',
+        stockOut,
+      };
+    });
+  }
+
+  private orderTotal(items: { stockOut: boolean; unitPaise: number; qty: number }[]) {
+    return items.reduce(
+      (sum, item) => sum + (item.stockOut ? 0 : item.unitPaise * item.qty),
+      0,
+    );
+  }
+
+  private async toShopOrderDto(row: typeof shopOrders.$inferSelect) {
+    let items: {
+      slug: string;
+      title: string;
+      size: string;
+      qty: number;
+      unitPaise: number;
+      paise: number;
+      image: string;
+      stockOut: boolean;
+    }[] = [];
     try {
       const parsed = JSON.parse(row.itemsJson) as unknown;
       if (Array.isArray(parsed)) {
-        items = parsed.flatMap((item) => {
-          if (!item || typeof item !== 'object') return [];
-          const record = item as Record<string, unknown>;
-          return [
-            {
-              slug: typeof record.slug === 'string' ? record.slug : '',
-              title: typeof record.title === 'string' ? record.title : 'Item',
-              size: typeof record.size === 'string' ? record.size : '',
-              qty: typeof record.qty === 'number' ? record.qty : 1,
-              paise: typeof record.paise === 'number' ? record.paise : 0,
-            },
-          ];
-        });
+        items = this.normalizeOrderItems(
+          parsed.flatMap((item) => {
+            if (!item || typeof item !== 'object') return [];
+            const record = item as Record<string, unknown>;
+            return [
+              {
+                slug: typeof record.slug === 'string' ? record.slug : '',
+                title: typeof record.title === 'string' ? record.title : 'Item',
+                size: typeof record.size === 'string' ? record.size : '',
+                qty: typeof record.qty === 'number' ? record.qty : 1,
+                paise: typeof record.paise === 'number' ? record.paise : 0,
+                unitPaise: typeof record.unitPaise === 'number' ? record.unitPaise : undefined,
+                image: typeof record.image === 'string' ? record.image : '',
+                stockOut: record.stockOut === true,
+              },
+            ];
+          }),
+        );
       }
     } catch {
       items = [];
+    }
+    const missing = [...new Set(items.filter((item) => !item.image && item.slug).map((item) => item.slug))];
+    if (missing.length > 0) {
+      const products = await this.db
+        .select({ slug: storeProducts.slug, imageUrl: storeProducts.imageUrl })
+        .from(storeProducts)
+        .where(inArray(storeProducts.slug, missing));
+      const images = new Map(products.map((product) => [product.slug, product.imageUrl || '']));
+      items = items.map((item) =>
+        item.image ? item : { ...item, image: images.get(item.slug) || '' },
+      );
     }
     return {
       id: row.id,
@@ -663,8 +827,9 @@ export class StoreService {
       address: row.address,
       city: row.city,
       pincode: row.pincode,
+      rejectReason: row.rejectReason,
       items,
-      amountPaise: row.amountPaise,
+      amountPaise: items.length > 0 ? this.orderTotal(items) : row.amountPaise,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -885,10 +1050,9 @@ export class StoreService {
   ) {
     const label = (input.label ?? current?.label ?? '').trim();
     if (!label) throw new BadRequestException('Label is required');
-    const slug = this.slugify(
-      (input.slug ?? current?.slug ?? label).trim() || label,
-    );
-    if (!slug) throw new BadRequestException('Slug is required');
+    const slug =
+      this.slugify((input.slug ?? current?.slug ?? label).trim() || label) ||
+      `tab-${Date.now().toString(36)}`;
     const sortOrder =
       input.sortOrder !== undefined
         ? Number(input.sortOrder)

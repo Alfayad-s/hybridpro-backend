@@ -446,6 +446,39 @@ export class AdminController {
     return this.store.listShopOrders(q);
   }
 
+  @Patch('shop-orders/:id')
+  @UseGuards(CoachGuard)
+  updateShopOrder(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      items?: {
+        slug?: string;
+        title?: string;
+        size?: string;
+        qty?: number;
+        paise?: number;
+        unitPaise?: number;
+        image?: string;
+        stockOut?: boolean;
+      }[];
+    },
+  ) {
+    return this.store.updateShopOrder(id, body.items ?? []);
+  }
+
+  @Post('shop-orders/:id/accept')
+  @UseGuards(CoachGuard)
+  acceptShopOrder(@Param('id') id: string) {
+    return this.store.acceptShopOrder(id);
+  }
+
+  @Post('shop-orders/:id/reject')
+  @UseGuards(CoachGuard)
+  rejectShopOrder(@Param('id') id: string, @Body() body: { reason?: string }) {
+    return this.store.rejectShopOrder(id, body.reason);
+  }
+
   @Get('shop-promos')
   @UseGuards(CoachGuard)
   shopPromos(@Query('placement') placement?: string) {

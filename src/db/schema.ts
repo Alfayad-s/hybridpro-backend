@@ -454,6 +454,7 @@ export const shopOrders = pgTable(
     pincode: text('pincode').notNull().default(''),
     itemsJson: text('items_json').notNull().default('[]'),
     amountPaise: integer('amount_paise').notNull().default(0),
+    rejectReason: text('reject_reason').notNull().default(''),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
