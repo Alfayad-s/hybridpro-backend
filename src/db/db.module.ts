@@ -58,6 +58,21 @@ function sessionPoolerUrl(raw: string) {
         const stamped = await client<{ version: string }[]>`
           SELECT version FROM app_schema WHERE id = 1
         `;
+        // These landed after the schema stamp. Existing production databases
+        // already match schemaVersion, so they skip the block below and would
+        // otherwise reject new shop tabs (missing coming_soon).
+        const [categoryTable] = await client<{ rel: string | null }[]>`
+          SELECT to_regclass('public.store_categories') AS rel
+        `;
+        if (categoryTable?.rel) {
+          await client`ALTER TABLE store_categories ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
+        }
+        const [productTable] = await client<{ rel: string | null }[]>`
+          SELECT to_regclass('public.store_products') AS rel
+        `;
+        if (productTable?.rel) {
+          await client`ALTER TABLE store_products ADD COLUMN IF NOT EXISTS coming_soon boolean NOT NULL DEFAULT false`;
+        }
         if (stamped[0]?.version !== schemaVersion) {
           await client`
             CREATE TABLE IF NOT EXISTS coach_availability (
