@@ -161,6 +161,27 @@ function sessionPoolerUrl(raw: string) {
         await client`CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_reference_uidx ON shop_orders (reference)`;
         await client`CREATE INDEX IF NOT EXISTS shop_orders_created_idx ON shop_orders (created_at)`;
         await client`ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS reject_reason text NOT NULL DEFAULT ''`;
+        // Hyrox group chat landed after the schema stamp. Stamped production
+        // databases return below and never reached these creates.
+        await client`
+          CREATE TABLE IF NOT EXISTS hyrox_messages (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            sender_role text NOT NULL,
+            sender_user_id uuid,
+            sender_name text NOT NULL,
+            sender_coach_email text,
+            body text NOT NULL,
+            image_url text,
+            created_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`CREATE INDEX IF NOT EXISTS hyrox_messages_created_idx ON hyrox_messages (created_at)`;
+        await client`
+          CREATE TABLE IF NOT EXISTS hyrox_reads (
+            user_id text PRIMARY KEY,
+            last_read_at timestamp NOT NULL
+          )
+        `;
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
