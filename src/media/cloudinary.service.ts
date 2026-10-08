@@ -89,6 +89,7 @@ export class CloudinaryService {
   async uploadChatImage(params: {
     memberUserId: string;
     buffer: Buffer;
+    video?: boolean;
   }): Promise<{ url: string; publicId: string }> {
     const safeId = params.memberUserId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48) || 'member';
     const folder = `gymtrack/chat/member-${safeId}`;
@@ -99,8 +100,14 @@ export class CloudinaryService {
         folder,
         public_id: publicId,
         overwrite: false,
-        resource_type: 'image',
-        transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto' }],
+        resource_type: params.video ? 'video' : 'image',
+        ...(params.video
+          ? {}
+          : {
+              transformation: [
+                { width: 1600, height: 1600, crop: 'limit', quality: 'auto' },
+              ],
+            }),
       });
       return { url: result.secure_url, publicId: result.public_id };
     } catch (error) {

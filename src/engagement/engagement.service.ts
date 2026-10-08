@@ -10,6 +10,7 @@ import {
   memberRoutines,
   notificationLogs,
   notificationTemplates,
+  subscriptions,
   userRewards,
 } from '../db/schema.js';
 import { FcmService } from '../notifications/fcm.service.js';
@@ -239,6 +240,7 @@ export class EngagementService {
   }
 
   private async deliver(userId: string, now: Date) {
+    if (await this.isHyroxMember(userId)) return false;
     const routine = await this.ensureRoutine(userId);
     const decision = await this.decide(userId, routine, now);
     const notice = decision.notification;
@@ -265,6 +267,23 @@ export class EngagementService {
       },
     });
     return true;
+  }
+
+  private async isHyroxMember(userId: string) {
+    const rows = await this.db
+      .select({
+        planId: subscriptions.planId,
+        status: subscriptions.status,
+        expiresAt: subscriptions.expiresAt,
+      })
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, userId))
+      .orderBy(desc(subscriptions.updatedAt));
+    return rows.some((row) => {
+      if (row.planId !== 'hyrox' || row.status !== 'active') return false;
+      if (!row.expiresAt) return true;
+      return row.expiresAt.getTime() > Date.now();
+    });
   }
 
   private async sentCount(userId: string, localDate: string, type: string) {

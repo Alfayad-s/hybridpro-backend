@@ -57,6 +57,12 @@ type UpdateMeBody = {
 };
 
 const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CHAT_VIDEO_MAX_BYTES = 40 * 1024 * 1024;
+const CHAT_VIDEO_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+]);
 const PROGRESS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const CHAT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const PROGRESS_POSES = new Set(['front', 'side', 'back']);
@@ -439,8 +445,8 @@ export class MeController {
   }
 
   @Get('exercises')
-  exercisesList(@Query('q') q?: string) {
-    return this.exercises.list(q);
+  exercisesList(@Query('q') q?: string, @Query('library') library?: string) {
+    return this.exercises.list(q, library);
   }
 
   @Get('sync')
@@ -574,7 +580,7 @@ export class MeController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: CHAT_IMAGE_MAX_BYTES },
+      limits: { fileSize: CHAT_VIDEO_MAX_BYTES },
     }),
   )
   async uploadChatMedia(
@@ -582,17 +588,23 @@ export class MeController {
     @UploadedFile() file: Express.Multer.File | undefined,
   ) {
     if (!file?.buffer?.length) {
-      throw new BadRequestException('Image file is required');
+      throw new BadRequestException('A photo or video is required');
     }
-    if (!CHAT_IMAGE_TYPES.has(file.mimetype)) {
-      throw new BadRequestException('Use a JPG, PNG, WEBP, or GIF image');
+    const video = CHAT_VIDEO_TYPES.has(file.mimetype);
+    const image = CHAT_IMAGE_TYPES.has(file.mimetype);
+    if (!video && !image) {
+      throw new BadRequestException('Use a JPG, PNG, WEBP, GIF, or MP4');
     }
-    if (file.size > CHAT_IMAGE_MAX_BYTES) {
-      throw new BadRequestException('Image must be under 5MB');
+    const max = video ? CHAT_VIDEO_MAX_BYTES : CHAT_IMAGE_MAX_BYTES;
+    if (file.size > max) {
+      throw new BadRequestException(
+        video ? 'Video must be under 40MB' : 'Image must be under 5MB',
+      );
     }
     const uploaded = await this.cloudinary.uploadChatImage({
       memberUserId: member.userId,
       buffer: file.buffer,
+      video,
     });
     return { url: uploaded.url, publicId: uploaded.publicId };
   }

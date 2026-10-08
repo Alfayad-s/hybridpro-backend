@@ -231,6 +231,7 @@ export const exercises = pgTable(
     imageUrl: text('image_url'),
     videoUrl: text('video_url'),
     userId: uuid('user_id'),
+    library: text('library').notNull().default('workout'),
   },
   (t) => [uniqueIndex('exercises_slug_uidx').on(t.slug)],
 );

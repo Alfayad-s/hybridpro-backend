@@ -45,9 +45,11 @@ export class HyroxChatService {
     await this.requireHyroxMember(member);
     const messages = await this.listMessages(limit);
     const unreadCount = await this.unreadFor(member.userId);
+    const members = await this.listMembers();
     return {
       conversation: this.conversation(member.userId, unreadCount),
       messages,
+      members,
     };
   }
 
@@ -101,6 +103,35 @@ export class HyroxChatService {
   async markCoachRead() {
     await this.markRead('coach');
     return { ok: true };
+  }
+
+  private async listMembers() {
+    const rows = await this.db
+      .select({
+        userId: subscriptions.userId,
+        expiresAt: subscriptions.expiresAt,
+        profileName: profiles.fullName,
+        profileAvatar: profiles.avatarUrl,
+        accountName: memberAccounts.fullName,
+        accountAvatar: memberAccounts.avatarUrl,
+      })
+      .from(subscriptions)
+      .leftJoin(profiles, eq(profiles.id, subscriptions.userId))
+      .leftJoin(memberAccounts, eq(memberAccounts.id, subscriptions.userId))
+      .where(and(eq(subscriptions.planId, 'hyrox'), eq(subscriptions.status, 'active')));
+
+    const seen = new Set<string>();
+    const members: { userId: string; name: string; avatarUrl: string | null }[] = [];
+    for (const row of rows) {
+      if (!row.userId || seen.has(row.userId)) continue;
+      if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) continue;
+      seen.add(row.userId);
+      const name = (row.profileName || row.accountName || '').trim() || 'Member';
+      const avatar = (row.profileAvatar || row.accountAvatar || '').trim() || null;
+      members.push({ userId: row.userId, name, avatarUrl: avatar });
+    }
+    members.sort((a, b) => a.name.localeCompare(b.name));
+    return members;
   }
 
   private conversation(memberUserId: string, unreadCount: number) {

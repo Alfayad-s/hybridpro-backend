@@ -40,6 +40,7 @@ export type ExerciseInput = {
   videoUrl?: string;
   instructions?: string[] | string;
   description?: string;
+  library?: string;
 };
 
 const DEFAULT_IMAGE =
@@ -59,30 +60,78 @@ const ANATOMY: Record<
   'Full Body': { target: 'Full Body', view: 'front', primary: ['chest', 'quadriceps'], secondary: ['abs'] },
 };
 
+const HYROX_CATALOG: { name: string; muscleGroup: string; equipment: string }[] = [
+  { name: 'Squat', muscleGroup: 'Legs', equipment: 'Barbell' },
+  { name: 'Romanian deadlift', muscleGroup: 'Legs', equipment: 'Barbell' },
+  { name: 'Walking lunge', muscleGroup: 'Legs', equipment: 'Bodyweight' },
+  { name: 'Glute bridge', muscleGroup: 'Glutes', equipment: 'Bodyweight' },
+  { name: 'Plank', muscleGroup: 'Core', equipment: 'Bodyweight' },
+  { name: 'Jog 1 min / walk 2 min', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Jog 2 min / walk 1 min', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Easy jog · 30 min', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Easy jog · 15 min', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Jog · 3 min', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Push-up', muscleGroup: 'Chest', equipment: 'Bodyweight' },
+  { name: 'Row', muscleGroup: 'Back', equipment: 'Barbell' },
+  { name: 'Row · 2 min', muscleGroup: 'Back', equipment: 'Rower' },
+  { name: 'Row · 3 min', muscleGroup: 'Back', equipment: 'Rower' },
+  { name: 'Overhead press', muscleGroup: 'Shoulders', equipment: 'Barbell' },
+  { name: 'Dumbbell carry · 20m', muscleGroup: 'Full Body', equipment: 'Dumbbell' },
+  { name: 'Dumbbell carry · 40m', muscleGroup: 'Full Body', equipment: 'Dumbbell' },
+  { name: 'Dead bug', muscleGroup: 'Core', equipment: 'Bodyweight' },
+  { name: 'Ski or bike · 2 min', muscleGroup: 'Full Body', equipment: 'Machine' },
+  { name: 'Ski or bike · 3 min', muscleGroup: 'Full Body', equipment: 'Machine' },
+  { name: 'Sled or leg press', muscleGroup: 'Legs', equipment: 'Sled' },
+  { name: 'Burpee broad jump', muscleGroup: 'Full Body', equipment: 'Bodyweight' },
+  { name: 'Farmer carry · 20m', muscleGroup: 'Full Body', equipment: 'Dumbbell' },
+  { name: 'Farmer carry · 30m', muscleGroup: 'Full Body', equipment: 'Dumbbell' },
+  { name: 'Farmer carry · 40m', muscleGroup: 'Full Body', equipment: 'Dumbbell' },
+  { name: 'Lunge', muscleGroup: 'Legs', equipment: 'Bodyweight' },
+  { name: 'Wall ball', muscleGroup: 'Full Body', equipment: 'Wall ball' },
+  { name: 'Circuit, twice. Rest 2 min between rounds', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: '8 × 1km with the eight stations', muscleGroup: 'Full Body', equipment: 'None' },
+  { name: 'Kneeling hip stretch · 30s', muscleGroup: 'Legs', equipment: 'None' },
+  { name: 'Standing hamstring fold · 30s', muscleGroup: 'Legs', equipment: 'None' },
+  { name: 'Figure-4 glute stretch · 30s', muscleGroup: 'Glutes', equipment: 'None' },
+  { name: 'Doorway chest stretch · 30s', muscleGroup: 'Chest', equipment: 'None' },
+  { name: 'Overhead lat reach · 30s', muscleGroup: 'Back', equipment: 'None' },
+  { name: 'Wall calf stretch · 30s', muscleGroup: 'Legs', equipment: 'None' },
+];
+
 @Injectable()
 export class ExercisesService {
   private seeding: Promise<void> | null = null;
 
   constructor(@Inject(DB) private readonly db: Db) {}
 
-  async list(q?: string) {
+  async list(q?: string, library?: string) {
     await this.ensureSeeded();
+    const shelf = library === 'hyrox' ? 'hyrox' : 'workout';
+    if (shelf === 'hyrox') await this.ensureHyroxSeeded();
     const query = q?.trim();
+    const shelfWhere = eq(exercises.library, shelf);
     const rows = query
       ? await this.db
           .select()
           .from(exercises)
           .where(
-            or(
-              ilike(exercises.name, `%${query}%`),
-              ilike(exercises.slug, `%${query}%`),
-              ilike(exercises.muscleGroup, `%${query}%`),
-              ilike(exercises.targetMuscle, `%${query}%`),
-              ilike(exercises.equipment, `%${query}%`),
+            and(
+              shelfWhere,
+              or(
+                ilike(exercises.name, `%${query}%`),
+                ilike(exercises.slug, `%${query}%`),
+                ilike(exercises.muscleGroup, `%${query}%`),
+                ilike(exercises.targetMuscle, `%${query}%`),
+                ilike(exercises.equipment, `%${query}%`),
+              ),
             ),
           )
           .orderBy(exercises.muscleGroup, exercises.name)
-      : await this.db.select().from(exercises).orderBy(exercises.muscleGroup, exercises.name);
+      : await this.db
+          .select()
+          .from(exercises)
+          .where(shelfWhere)
+          .orderBy(exercises.muscleGroup, exercises.name);
     return { exercises: rows.map((row) => this.toDto(row)) };
   }
 
@@ -93,14 +142,18 @@ export class ExercisesService {
   }
 
   async create(input: ExerciseInput) {
+    const library = input.library === 'hyrox' ? 'hyrox' : 'workout';
     const payload = this.toRow(input, true);
+    if (library === 'hyrox' && !payload.slug.startsWith('hyrox-')) {
+      payload.slug = `hyrox-${payload.slug}`.slice(0, 80);
+    }
     const [existing] = await this.db
       .select({ id: exercises.id })
       .from(exercises)
       .where(eq(exercises.slug, payload.slug))
       .limit(1);
     if (existing) throw new Error('An exercise with that slug already exists');
-    const [row] = await this.db.insert(exercises).values(payload).returning();
+    const [row] = await this.db.insert(exercises).values({ ...payload, library }).returning();
     return { exercise: this.toDto(row) };
   }
 
@@ -174,9 +227,42 @@ export class ExercisesService {
           equipment: item.equipment,
           difficulty: 'intermediate',
           imageUrl: DEFAULT_IMAGE,
+          library: 'workout',
         });
       } catch (error) {
         console.error('[exercises.seed]', item.id, error);
+      }
+    }
+  }
+
+  private async ensureHyroxSeeded() {
+    const [row] = await this.db
+      .select({ n: count() })
+      .from(exercises)
+      .where(eq(exercises.library, 'hyrox'));
+    if (Number(row?.n ?? 0) > 0) return;
+    for (const item of HYROX_CATALOG) {
+      const slug = `hyrox-${toSlug(item.name)}`.slice(0, 80);
+      const anatomy = ANATOMY[item.muscleGroup] ?? ANATOMY['Full Body'];
+      try {
+        await this.db.insert(exercises).values({
+          slug,
+          name: item.name,
+          description: `${item.name} for the Hyrox plan`,
+          instructions: JSON.stringify([]),
+          muscleGroup: item.muscleGroup,
+          targetMuscle: anatomy.target,
+          secondaryMuscles: JSON.stringify(anatomy.secondary),
+          anatomyView: anatomy.view,
+          anatomyPrimary: JSON.stringify(anatomy.primary),
+          anatomySecondary: JSON.stringify(anatomy.secondary),
+          equipment: item.equipment,
+          difficulty: 'intermediate',
+          imageUrl: DEFAULT_IMAGE,
+          library: 'hyrox',
+        });
+      } catch (error) {
+        console.error('[exercises.hyrox-seed]', slug, error);
       }
     }
   }

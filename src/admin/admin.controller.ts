@@ -575,8 +575,8 @@ export class AdminController {
 
   @Get('exercises')
   @UseGuards(CoachGuard)
-  exercises(@Query('q') q?: string) {
-    return this.exerciseCatalog.list(q);
+  exercises(@Query('q') q?: string, @Query('library') library?: string) {
+    return this.exerciseCatalog.list(q, library);
   }
 
   @Post('exercises')
@@ -595,6 +595,7 @@ export class AdminController {
       videoUrl?: string;
       instructions?: string[] | string;
       description?: string;
+      library?: string;
     },
   ) {
     return this.exerciseCatalog.create(body);

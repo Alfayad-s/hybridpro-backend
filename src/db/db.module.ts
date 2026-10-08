@@ -182,6 +182,12 @@ function sessionPoolerUrl(raw: string) {
             last_read_at timestamp NOT NULL
           )
         `;
+        const [exerciseTable] = await client<{ rel: string | null }[]>`
+          SELECT to_regclass('public.exercises') AS rel
+        `;
+        if (exerciseTable?.rel) {
+          await client`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS library text NOT NULL DEFAULT 'workout'`;
+        }
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
@@ -338,7 +344,8 @@ function sessionPoolerUrl(raw: string) {
             difficulty text,
             image_url text,
             video_url text,
-            user_id uuid
+            user_id uuid,
+            library text NOT NULL DEFAULT 'workout'
           )
         `;
         await client`CREATE UNIQUE INDEX IF NOT EXISTS exercises_slug_uidx ON exercises (slug)`;
