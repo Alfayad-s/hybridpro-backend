@@ -46,14 +46,13 @@ COACH_EMAIL=akash@hybridpro.fit
 COACH_PASSWORD=your-coach-password
 COACH_SESSION_SECRET=your-session-secret
 WEBSITE_URL=https://hybridpro.in
-APP_URL=https://app.hybridpro.in
 # Required for email OTP (Resend — use a verified domain)
 RESEND_API_KEY=re_xxxxxxxx
 RESEND_FROM=Hybrid Pro <noreply@hybridpro.in>
 GOOGLE_CLIENT_IDS=web-client-id,ios-client-id,android-client-id
 ```
 5. Deploy, then open `https://your-service.onrender.com/api/health`.
-6. On Vercel (website + app):
+6. On Vercel (website):
 
 ```bash
 HYBRID_BACKEND_URL=https://your-service.onrender.com
@@ -111,6 +110,6 @@ NEXT_PUBLIC_APP_URL=https://hybridpro.in
 - `DATABASE_URL` (Supabase Postgres pooler)
 - `SUPABASE_URL` + `SUPABASE_ANON_KEY` (same project — required for `/api/me/*` and post-payment unlock)
 - `INTERNAL_API_SECRET`, `COACH_EMAIL`, `COACH_PASSWORD`, `COACH_SESSION_SECRET`
-- `WEBSITE_URL=https://hybridpro.in`, `APP_URL=https://app.hybridpro.in`, `PORT=3002`
+- `WEBSITE_URL=https://hybridpro.in`, `PORT=3002`
 
 Without `SUPABASE_URL` / `SUPABASE_ANON_KEY`, Pine Labs can still charge, but the member app will show **Supabase is not configured** when unlocking after payment.

@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Headers,
   NotFoundException,
   Param,
@@ -11,11 +12,13 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from '../auth/auth.service.js';
 import { CoachGuard } from '../auth/coach.guard.js';
@@ -95,6 +98,33 @@ export class AdminController {
   @UseGuards(CoachGuard)
   clientGym(@Param('id') id: string) {
     return this.gym.listForClient(id);
+  }
+
+  @Get('gym/places')
+  @UseGuards(CoachGuard)
+  savedGyms(@Query('review') review?: string) {
+    return this.gym.listSavedGymsForAdmin({ review });
+  }
+
+  @Get('clients/:id/gym-places')
+  @UseGuards(CoachGuard)
+  clientSavedGyms(@Param('id') id: string) {
+    return this.gym.listSavedGymsForAdmin({ subscriptionId: id });
+  }
+
+  @Patch('gym/places/:id')
+  @UseGuards(CoachGuard)
+  reviewSavedGym(@Param('id') id: string, @Body() body: { review?: string }) {
+    return this.gym.reviewSavedGym(id, body.review || '');
+  }
+
+  @Get('gym/places/:id/photo')
+  @UseGuards(CoachGuard)
+  @Header('Cache-Control', 'private, max-age=86400')
+  async savedGymPhoto(@Param('id') id: string, @Res() res: Response) {
+    const photo = await this.gym.adminPlacePhoto(id);
+    res.setHeader('Content-Type', photo.contentType);
+    res.send(photo.bytes);
   }
 
   @Get('chat/inbox')

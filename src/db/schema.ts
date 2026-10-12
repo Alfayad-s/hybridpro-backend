@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, doublePrecision, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey().notNull(),
@@ -291,6 +291,25 @@ export const gymSessions = pgTable(
     index('gym_sessions_sub_idx').on(t.subscriptionId),
     index('gym_sessions_status_idx').on(t.status),
   ],
+);
+
+/** Gyms a member picked on Google Maps. Live location is never stored here. */
+export const preferredGyms = pgTable(
+  'preferred_gyms',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    placeId: text('place_id').notNull(),
+    name: text('name').notNull(),
+    address: text('address').default('').notNull(),
+    lat: doublePrecision('lat').notNull(),
+    lng: doublePrecision('lng').notNull(),
+    photoRef: text('photo_ref'),
+    review: text('review').default('pending').notNull(),
+    enabled: boolean('enabled').default(true).notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('preferred_gyms_user_place_uidx').on(t.userId, t.placeId)],
 );
 
 export const coachConversations = pgTable(

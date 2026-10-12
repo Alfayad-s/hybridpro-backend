@@ -44,18 +44,16 @@ function collectPaymentParams(...sources: Array<Record<string, unknown> | undefi
 export class PaymentsController {
   constructor(private readonly subscriptions: SubscriptionService) {}
 
-  private appUrl() {
-    return (process.env.APP_URL || 'https://app.hybridpro.in').replace(/\/$/, '');
-  }
-
   private websiteUrl() {
     return (process.env.WEBSITE_URL || 'https://hybridpro.in').replace(/\/$/, '');
   }
 
-  private welcomeUrl(email?: string | null) {
-    const url = new URL('/dashboard', `${this.appUrl()}/`);
-    url.searchParams.set('welcome', '1');
+  private welcomeUrl(email?: string | null, planId?: string, orderId?: string) {
+    const url = new URL('/payment/success', `${this.websiteUrl()}/`);
+    url.searchParams.set('activated', '1');
     if (email) url.searchParams.set('email', email);
+    if (planId) url.searchParams.set('plan', planId);
+    if (orderId) url.searchParams.set('order_id', orderId);
     return url.toString();
   }
 
@@ -99,7 +97,7 @@ export class PaymentsController {
       if (!result.ok) {
         return res.redirect(303, failedUrl);
       }
-      return res.redirect(303, this.welcomeUrl(result.email));
+      return res.redirect(303, this.welcomeUrl(result.email, params.planId, params.pineOrderId));
     } catch (error) {
       const url = new URL('/payment/success', `${this.websiteUrl()}/`);
       if (params.pineOrderId) url.searchParams.set('order_id', params.pineOrderId);

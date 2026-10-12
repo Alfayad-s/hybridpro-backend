@@ -35,7 +35,7 @@ function sessionPoolerUrl(raw: string) {
         const url = process.env.DATABASE_URL?.trim();
         if (!url || /USER:PASSWORD|localhost:5432\/hybridpro/.test(url)) {
           throw new Error(
-            'DATABASE_URL is missing. Copy it from Hybrid Pro Mobile App/.env.local into hybrid-pro-api/.env',
+            'DATABASE_URL is missing. Set it in hybrid-pro-api/.env',
           );
         }
         const client = postgres(sessionPoolerUrl(url), {
@@ -387,6 +387,55 @@ function sessionPoolerUrl(raw: string) {
           CREATE UNIQUE INDEX IF NOT EXISTS gym_sessions_one_open_per_user
           ON gym_sessions (user_id)
           WHERE status = 'open'
+        `;
+        await client`
+          CREATE TABLE IF NOT EXISTS preferred_gyms (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            place_id text NOT NULL,
+            name text NOT NULL,
+            address text NOT NULL DEFAULT '',
+            lat double precision NOT NULL,
+            lng double precision NOT NULL,
+            photo_ref text,
+            enabled boolean NOT NULL DEFAULT true,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_name = 'preferred_gyms' AND column_name = 'place_id'
+            ) THEN
+              ALTER TABLE preferred_gyms RENAME TO preferred_gyms_old;
+              CREATE TABLE preferred_gyms (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id uuid NOT NULL,
+                place_id text NOT NULL,
+                name text NOT NULL,
+                address text NOT NULL DEFAULT '',
+                lat double precision NOT NULL,
+                lng double precision NOT NULL,
+                photo_ref text,
+                enabled boolean NOT NULL DEFAULT true,
+                updated_at timestamp DEFAULT now() NOT NULL
+              );
+              INSERT INTO preferred_gyms (user_id, place_id, name, lat, lng, enabled, updated_at)
+              SELECT user_id, 'legacy-' || user_id::text, name, lat, lng, enabled, updated_at
+              FROM preferred_gyms_old;
+              DROP TABLE preferred_gyms_old;
+            END IF;
+          END $$;
+        `;
+        await client`
+          CREATE UNIQUE INDEX IF NOT EXISTS preferred_gyms_user_place_uidx
+          ON preferred_gyms (user_id, place_id)
+        `;
+        await client`
+          ALTER TABLE preferred_gyms
+          ADD COLUMN IF NOT EXISTS review text NOT NULL DEFAULT 'pending'
         `;
         await client`
           CREATE TABLE IF NOT EXISTS coach_conversations (

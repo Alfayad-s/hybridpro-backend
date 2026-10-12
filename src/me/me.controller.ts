@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Inject,
   Param,
@@ -11,11 +12,13 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { memoryStorage } from 'multer';
@@ -497,6 +500,60 @@ export class MeController {
   @HttpCode(200)
   gymCheckOut(@CurrentMember() member: MemberUser) {
     return this.gym.checkOut(member);
+  }
+
+  @Get('gym/place')
+  gymPlace(@CurrentMember() member: MemberUser) {
+    return this.gym.listPreferredPlaces(member);
+  }
+
+  @Get('gym/places/search')
+  searchGyms(
+    @CurrentMember() member: MemberUser,
+    @Query('q') q?: string,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+  ) {
+    return this.gym.searchGyms(member, {
+      q,
+      lat: lat == null ? undefined : Number(lat),
+      lng: lng == null ? undefined : Number(lng),
+    });
+  }
+
+  @Get('gym/places/photo')
+  @Header('Cache-Control', 'private, max-age=86400')
+  async gymPhoto(
+    @CurrentMember() member: MemberUser,
+    @Query('ref') ref: string,
+    @Res() res: Response,
+  ) {
+    const photo = await this.gym.placePhoto(member, ref || '');
+    res.setHeader('Content-Type', photo.contentType);
+    res.send(photo.bytes);
+  }
+
+  @Post('gym/places')
+  @HttpCode(200)
+  addGymPlace(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { placeId?: string },
+  ) {
+    return this.gym.addPreferredPlace(member, body.placeId || '');
+  }
+
+  @Delete('gym/places/:id')
+  removeGymPlace(@CurrentMember() member: MemberUser, @Param('id') id: string) {
+    return this.gym.removePreferredPlace(member, id);
+  }
+
+  @Put('gym/places/enabled')
+  @HttpCode(200)
+  setGymPlacesEnabled(
+    @CurrentMember() member: MemberUser,
+    @Body() body: { enabled?: boolean },
+  ) {
+    return this.gym.setPreferredPlacesEnabled(member, body.enabled === true);
   }
 
   @Get('store/categories')

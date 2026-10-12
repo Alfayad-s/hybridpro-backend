@@ -13,9 +13,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       process.env.WEBSITE_URL || 'http://localhost:3000',
-      process.env.APP_URL || 'http://localhost:3001',
       'https://hybridpro.in',
-      'https://app.hybridpro.in',
     ],
     credentials: true,
   });
