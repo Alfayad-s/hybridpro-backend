@@ -188,6 +188,57 @@ function sessionPoolerUrl(raw: string) {
         if (exerciseTable?.rel) {
           await client`ALTER TABLE exercises ADD COLUMN IF NOT EXISTS library text NOT NULL DEFAULT 'workout'`;
         }
+        // Preferred gyms landed after the schema stamp. Stamped production
+        // databases return below and never reached the later CREATE.
+        await client`
+          CREATE TABLE IF NOT EXISTS preferred_gyms (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid NOT NULL,
+            place_id text NOT NULL,
+            name text NOT NULL,
+            address text NOT NULL DEFAULT '',
+            lat double precision NOT NULL,
+            lng double precision NOT NULL,
+            photo_ref text,
+            enabled boolean NOT NULL DEFAULT true,
+            updated_at timestamp DEFAULT now() NOT NULL
+          )
+        `;
+        await client`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_name = 'preferred_gyms' AND column_name = 'place_id'
+            ) THEN
+              ALTER TABLE preferred_gyms RENAME TO preferred_gyms_old;
+              CREATE TABLE preferred_gyms (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id uuid NOT NULL,
+                place_id text NOT NULL,
+                name text NOT NULL,
+                address text NOT NULL DEFAULT '',
+                lat double precision NOT NULL,
+                lng double precision NOT NULL,
+                photo_ref text,
+                enabled boolean NOT NULL DEFAULT true,
+                updated_at timestamp DEFAULT now() NOT NULL
+              );
+              INSERT INTO preferred_gyms (user_id, place_id, name, lat, lng, enabled, updated_at)
+              SELECT user_id, 'legacy-' || user_id::text, name, lat, lng, enabled, updated_at
+              FROM preferred_gyms_old;
+              DROP TABLE preferred_gyms_old;
+            END IF;
+          END $$;
+        `;
+        await client`
+          CREATE UNIQUE INDEX IF NOT EXISTS preferred_gyms_user_place_uidx
+          ON preferred_gyms (user_id, place_id)
+        `;
+        await client`
+          ALTER TABLE preferred_gyms
+          ADD COLUMN IF NOT EXISTS review text NOT NULL DEFAULT 'pending'
+        `;
         if (stamped[0]?.version === schemaVersion) {
           return drizzle(client, { schema });
         }
